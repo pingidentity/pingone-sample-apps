@@ -14,8 +14,12 @@ __pycache__/
 *.pyc
 .venv/
 
-# Angular build output
-client/dist/
+# Angular build output and cache
+**/client/dist/
+**/.angular/
+
+# Local reference docs (not for source control)
+POSTMAN_COLLECTIONS.md
 
 # macOS
 .DS_Store

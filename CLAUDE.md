@@ -20,6 +20,12 @@ The **Go app is always the canonical source of truth.** All other language ports
 
 ---
 
+## Postman collections
+
+Before designing a new sample app, consult `POSTMAN_COLLECTIONS.md` in this directory (gitignored, local only). It lists all available collections and their paths under `/Users/nicocheong/docs/forks/devdocs-pingone/resources/`. Read the relevant collection JSON to get authoritative request shapes, URL templates, and required parameters for the workflow you're implementing.
+
+---
+
 ## Translating a Go app to other languages
 
 When given a Go app to port, read its `main.go` fully before writing anything. Then apply the rules below for each target language.
