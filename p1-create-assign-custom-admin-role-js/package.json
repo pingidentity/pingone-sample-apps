@@ -1,0 +1,16 @@
+{
+  "name": "p1-create-assign-custom-admin-role-js",
+  "version": "1.0.0",
+  "description": "PingOne custom admin role workflow — Node/Express port",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.0.0",
+    "express": "^4.18.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

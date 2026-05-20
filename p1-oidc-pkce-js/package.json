@@ -1,0 +1,14 @@
+{
+  "name": "p1-oidc-pkce-js",
+  "version": "1.0.0",
+  "description": "PingOne OIDC Authorization Code + PKCE demo - Node.js/Express",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "cookie-parser": "^1.4.6",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2"
+  }
+}

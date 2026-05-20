@@ -1,0 +1,152 @@
+import React, { useState } from 'react';
+
+const OK_COLOR  = '#0a7a0a';
+const ERR_COLOR = '#b00020';
+
+const styles = {
+  h2: { marginBottom: 8 },
+  description: { color: '#444', marginBottom: 24 },
+  runBtn: {
+    fontSize: 16,
+    padding: '10px 24px',
+    cursor: 'pointer',
+    background: '#0055a4',
+    color: '#fff',
+    border: 'none',
+    borderRadius: 4,
+  },
+  loadingMsg: { color: '#555', fontStyle: 'italic', marginTop: 16 },
+  banner: (ok) => ({
+    padding: '10px 14px',
+    marginBottom: 20,
+    borderRadius: 4,
+    background: ok ? '#e6f7e6' : '#fde8ea',
+    color: ok ? OK_COLOR : ERR_COLOR,
+    fontWeight: 600,
+  }),
+  card: {
+    marginTop: 18,
+    padding: '12px 16px',
+    border: '1px solid #ddd',
+    borderRadius: 4,
+    background: '#fafafa',
+  },
+  cardTitle: (ok) => ({
+    margin: '0 0 6px 0',
+    color: ok ? OK_COLOR : ERR_COLOR,
+    fontSize: 15,
+    fontWeight: 600,
+  }),
+  urlBadge: {
+    display: 'inline-block',
+    fontFamily: 'monospace',
+    fontSize: 12,
+    color: '#555',
+    background: '#f0f0f0',
+    padding: '3px 8px',
+    borderRadius: 3,
+    marginBottom: 6,
+    wordBreak: 'break-all',
+  },
+  detail: { margin: '4px 0 0 0', fontSize: 14, color: '#333' },
+  summary: { cursor: 'pointer', fontSize: 13, color: '#444', userSelect: 'none', padding: '2px 0' },
+  pre: {
+    background: '#f4f4f4',
+    padding: '10px 12px',
+    borderLeft: '3px solid #888',
+    whiteSpace: 'pre-wrap',
+    wordWrap: 'break-word',
+    margin: '6px 0 0 0',
+    fontSize: 12,
+  },
+  againBtn: {
+    marginTop: 24,
+    fontSize: 15,
+    padding: '8px 20px',
+    cursor: 'pointer',
+    background: '#555',
+    color: '#fff',
+    border: 'none',
+    borderRadius: 4,
+  },
+};
+
+function StepCard({ step }) {
+  return (
+    <div style={styles.card}>
+      <h3 style={styles.cardTitle(step.ok)}>
+        {step.title} {step.ok ? '(ok)' : '(failed)'}
+      </h3>
+      {step.url && <div style={styles.urlBadge}>{step.url}</div>}
+      {step.detail && <p style={styles.detail}>{step.detail}</p>}
+      {step.body && (
+        <details open={!step.collapsed}>
+          <summary style={styles.summary}>Response</summary>
+          <pre style={styles.pre}>{step.body}</pre>
+        </details>
+      )}
+    </div>
+  );
+}
+
+export default function App() {
+  const [stage, setStage]     = useState('idle');   // idle | loading | results
+  const [result, setResult]   = useState(null);
+
+  async function runWorkflow() {
+    setStage('loading');
+    try {
+      const resp = await fetch('/api/run', { method: 'POST' });
+      const json = await resp.json();
+      setResult(json);
+      setStage('results');
+    } catch (err) {
+      setResult({
+        success: false,
+        steps: [{ title: 'Network error', ok: false, detail: err.message, body: '', url: '', collapsed: false }],
+      });
+      setStage('results');
+    }
+  }
+
+  function reset() {
+    setStage('idle');
+    setResult(null);
+  }
+
+  if (stage === 'idle') {
+    return (
+      <div>
+        <h2 style={styles.h2}>Custom Admin Role Workflow</h2>
+        <p style={styles.description}>
+          Creates a trimmed-down application admin role, assigns it to a group scoped to a population,
+          registers a user into that population, and verifies the inherited role assignment.
+        </p>
+        <button style={styles.runBtn} onClick={runWorkflow}>Run Workflow</button>
+      </div>
+    );
+  }
+
+  if (stage === 'loading') {
+    return (
+      <div>
+        <h2 style={styles.h2}>Custom Admin Role Workflow</h2>
+        <p style={styles.loadingMsg}>Running workflow, please wait...</p>
+      </div>
+    );
+  }
+
+  // results stage
+  return (
+    <div>
+      <h2 style={styles.h2}>Workflow Result</h2>
+      <div style={styles.banner(result.success)}>
+        {result.success ? 'All steps completed successfully.' : 'Workflow halted on error.'}
+      </div>
+      {result.steps.map((step, i) => (
+        <StepCard key={i} step={step} />
+      ))}
+      <button style={styles.againBtn} onClick={reset}>Run Again</button>
+    </div>
+  );
+}
