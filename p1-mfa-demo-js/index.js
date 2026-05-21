@@ -1,5 +1,10 @@
 require('dotenv').config();
+const fs = require('fs');
+const path = require('path');
 const express = require('express');
+
+const logoPNG = fs.readFileSync(path.join(__dirname, '..', 'assets', 'logo.png')).toString('base64');
+const logoSrc = `data:image/png;base64,${logoPNG}`;
 
 const envID = process.env.PINGONE_ENV_ID;
 const clientID = process.env.PINGONE_CLIENT_ID;
@@ -62,8 +67,12 @@ function cookieHeader(session) {
 const indexHTML = `
 <!DOCTYPE html>
 <html>
-<head><title>Login</title><style>body{font-family:sans-serif; margin:40px;}</style></head>
+<head><title>Login</title><style>body{font-family:sans-serif; margin:0; background:#f5f5f5;} button{background:#E1003B; color:#fff; border:none; border-radius:4px; font-size:15px; padding:10px 20px; cursor:pointer;} button:hover{background:#c40034;}</style></head>
 <body>
+<header style="background:#B8002F;padding:12px 24px;display:flex;align-items:center;margin-bottom:0;">
+  <img src="${logoSrc}" style="height:35px;width:auto;" alt="Ping Identity">
+</header>
+<div style="padding:32px 40px;max-width:900px;margin:0 auto;">
   <h2>Secure Login</h2>
   <form action="/login" method="POST">
     <label>Username:</label><br>
@@ -72,14 +81,19 @@ const indexHTML = `
     <input type="password" name="password" required><br><br>
     <button type="submit">Log In</button>
   </form>
+</div>
 </body>
 </html>`;
 
 const mfaHTML = (flowID) => `
 <!DOCTYPE html>
 <html>
-<head><title>MFA Required</title><style>body{font-family:sans-serif; margin:40px;}</style></head>
+<head><title>MFA Required</title><style>body{font-family:sans-serif; margin:0; background:#f5f5f5;} button{background:#E1003B; color:#fff; border:none; border-radius:4px; font-size:15px; padding:10px 20px; cursor:pointer;} button:hover{background:#c40034;}</style></head>
 <body>
+<header style="background:#B8002F;padding:12px 24px;display:flex;align-items:center;margin-bottom:0;">
+  <img src="${logoSrc}" style="height:35px;width:auto;" alt="Ping Identity">
+</header>
+<div style="padding:32px 40px;max-width:900px;margin:0 auto;">
   <h2>Two-Factor Authentication</h2>
   <p>Please enter the verification code sent to your email.</p>
   <form action="/mfa-verify" method="POST">
@@ -88,29 +102,40 @@ const mfaHTML = (flowID) => `
     <input type="text" name="otp" required><br><br>
     <button type="submit">Verify</button>
   </form>
+</div>
 </body>
 </html>`;
 
 const dashboardHTML = (token) => `
 <!DOCTYPE html>
 <html>
-<head><title>Dashboard</title><style>body{font-family:sans-serif; margin:40px;} pre{background:#eee; padding:15px;}</style></head>
+<head><title>Dashboard</title><style>body{font-family:sans-serif; margin:0; background:#f5f5f5;} pre{background:#f4f4f4; padding:12px; border-left:3px solid #888;}</style></head>
 <body>
-  <h2 style="color: green;">Login Successful!</h2>
+<header style="background:#B8002F;padding:12px 24px;display:flex;align-items:center;margin-bottom:0;">
+  <img src="${logoSrc}" style="height:35px;width:auto;" alt="Ping Identity">
+</header>
+<div style="padding:32px 40px;max-width:900px;margin:0 auto;">
+  <h2 style="color:#0a7a0a;">Login Successful!</h2>
   <p>You have securely authenticated. Here is your Access Token:</p>
   <pre style="white-space: pre-wrap; word-wrap: break-word;">${token}</pre>
   <a href="/">Log Out</a>
+</div>
 </body>
 </html>`;
 
 const errorHTML = (msg) => `
 <!DOCTYPE html>
 <html>
-<head><title>Error</title><style>body{font-family:sans-serif; margin:40px;}</style></head>
+<head><title>Error</title><style>body{font-family:sans-serif; margin:0; background:#f5f5f5;} pre{background:#f4f4f4; padding:12px; border-left:3px solid #888;}</style></head>
 <body>
-  <h2 style="color: red;">Authentication Error</h2>
+<header style="background:#B8002F;padding:12px 24px;display:flex;align-items:center;margin-bottom:0;">
+  <img src="${logoSrc}" style="height:35px;width:auto;" alt="Ping Identity">
+</header>
+<div style="padding:32px 40px;max-width:900px;margin:0 auto;">
+  <h2 style="color:#b00020;">Authentication Error</h2>
   <pre>${msg}</pre>
   <a href="/">Try Again</a>
+</div>
 </body>
 </html>`;
 

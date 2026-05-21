@@ -23,6 +23,11 @@ interface WorkflowResponse {
   standalone: true,
   imports: [],
   template: `
+    <div>
+      <header style="background:#B8002F;padding:12px 24px;display:flex;align-items:center;margin-bottom:0;">
+        <img [src]="logoSrc" style="height:35px;width:auto;" alt="Ping Identity">
+      </header>
+      <div style="padding:32px 40px;max-width:900px;margin:0 auto;">
     <h2 style="margin-top: 0;">Custom Admin Role Workflow</h2>
     <p style="color: #555; margin-bottom: 24px;">
       Creates a trimmed-down application admin role, assigns it to a group scoped to a
@@ -34,7 +39,7 @@ interface WorkflowResponse {
       @case ('idle') {
         <button
           (click)="runWorkflow()"
-          style="font-size: 16px; padding: 10px 24px; cursor: pointer; background: #1a6bbf; color: #fff; border: none; border-radius: 4px;">
+          style="font-size: 16px; padding: 10px 24px; cursor: pointer; background: #E1003B; color: #fff; border: none; border-radius: 4px;">
           Run Workflow
         </button>
       }
@@ -44,7 +49,7 @@ interface WorkflowResponse {
           <div style="
             width: 22px; height: 22px;
             border: 3px solid #ccc;
-            border-top-color: #1a6bbf;
+            border-top-color: #E1003B;
             border-radius: 50%;
             animation: spin 0.8s linear infinite;">
           </div>
@@ -130,11 +135,14 @@ interface WorkflowResponse {
         }
       }
     }
+      </div>
+    </div>
   `,
 })
 export class AppComponent {
   private http = inject(HttpClient);
 
+  logoSrc = 'assets/logo.png';
   stage: Stage = 'idle';
   response: WorkflowResponse | null = null;
   error = '';

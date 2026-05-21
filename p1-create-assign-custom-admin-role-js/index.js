@@ -1,5 +1,10 @@
 require('dotenv').config();
+const fs = require('fs');
+const path = require('path');
 const express = require('express');
+
+const logoPNG = fs.readFileSync(path.join(__dirname, '..', 'assets', 'logo.png')).toString('base64');
+const logoSrc = `data:image/png;base64,${logoPNG}`;
 
 const adminEnvID        = process.env.PINGONE_ADMIN_ENV_ID;
 const adminClientID     = process.env.PINGONE_ADMIN_CLIENT_ID;
@@ -21,8 +26,9 @@ const indexHTML = `
 <head>
 <title>PingOne Custom Admin Role Workflow</title>
 <style>
-  body{font-family:sans-serif; margin:40px; max-width:900px;}
-  button{font-size:16px; padding:10px 20px; cursor:pointer;}
+  body{font-family:sans-serif; margin:0; background:#f5f5f5;}
+  button{font-size:16px; padding:10px 20px; cursor:pointer; background:#E1003B; color:#fff; border:none; border-radius:4px;}
+  button:hover{background:#c40034;}
   pre{background:#f4f4f4; padding:12px; border-left:3px solid #888; white-space:pre-wrap; word-wrap:break-word;}
   .step{margin-top:18px;}
   .step h3{margin:0 0 6px 0;}
@@ -31,9 +37,14 @@ const indexHTML = `
 </style>
 </head>
 <body>
+<header style="background:#B8002F;padding:12px 24px;display:flex;align-items:center;margin-bottom:0;">
+  <img src="${logoSrc}" style="height:35px;width:auto;" alt="Ping Identity">
+</header>
+<div style="padding:32px 40px;max-width:900px;margin:0 auto;">
   <h2>Custom Admin Role Workflow</h2>
   <p>Creates a trimmed-down application admin role, assigns it to a group scoped to a population, registers a user into that population, and verifies the inherited role assignment.</p>
   <form action="/run" method="POST"><button type="submit">Run Workflow</button></form>
+</div>
 </body>
 </html>`;
 
@@ -66,7 +77,7 @@ function resultsHTML(data) {
 <head>
 <title>Workflow Result</title>
 <style>
-  body{font-family:sans-serif; margin:40px; max-width:900px;}
+  body{font-family:sans-serif; margin:0; background:#f5f5f5;}
   pre{background:#f4f4f4; padding:12px; border-left:3px solid #888; white-space:pre-wrap; word-wrap:break-word; margin:0;}
   .step{margin-top:18px;}
   .step h3{margin:0 0 6px 0;}
@@ -82,10 +93,15 @@ function resultsHTML(data) {
 </style>
 </head>
 <body>
+<header style="background:#B8002F;padding:12px 24px;display:flex;align-items:center;margin-bottom:0;">
+  <img src="${logoSrc}" style="height:35px;width:auto;" alt="Ping Identity">
+</header>
+<div style="padding:32px 40px;max-width:900px;margin:0 auto;">
   <h2>Workflow Result</h2>
   <div class="banner ${bannerClass}">${bannerMsg}</div>
   ${stepsHTML}
   <p><a href="/">Back</a></p>
+</div>
 </body>
 </html>`;
 }

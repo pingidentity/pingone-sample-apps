@@ -6,6 +6,7 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	_ "crypto/sha256" // registers SHA-256 with crypto.SHA256.New
+	_ "embed"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
@@ -24,6 +25,9 @@ import (
 
 	"github.com/joho/godotenv"
 )
+
+//go:embed logo.png
+var logoPNG []byte
 
 var (
 	envID        string
@@ -101,6 +105,10 @@ func main() {
 		log.Fatal("Missing required environment variables. Please check your .env file.")
 	}
 
+	http.HandleFunc("/logo.png", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		w.Write(logoPNG)
+	})
 	http.HandleFunc("/", handleIndex)
 	http.HandleFunc("/prepare", handlePrepare)
 	http.HandleFunc("/callback", handleCallback)
@@ -682,23 +690,29 @@ const pageHTML = `
 <head>
 <title>{{.Title}}</title>
 <style>
-  body{font-family:sans-serif; margin:40px; max-width:980px;}
+  body{font-family:sans-serif; margin:0; background:#f5f5f5;}
   h2{margin-top:0;}
-  button{font-size:16px; padding:10px 20px; cursor:pointer;}
+  button{font-size:16px; padding:10px 20px; cursor:pointer; background:#E1003B; color:#fff; border:none; border-radius:4px;}
+  button:hover{background:#b8002f;}
   pre{background:#f4f4f4; padding:12px; border-left:3px solid #888; white-space:pre-wrap; word-break:break-all; margin:0;}
   code{background:#f0f0f0; padding:1px 4px; border-radius:2px;}
-  .card{margin-top:18px; padding:14px 16px; border:1px solid #ddd; border-radius:4px;}
+  .card{margin-top:18px; padding:14px 16px; border:1px solid #ddd; border-radius:4px; background:#fff;}
   .card h3{margin:0 0 6px 0;}
   .ok{color:#0a7a0a;}
   .err{color:#b00020;}
-  .url{font-family:monospace; font-size:13px; color:#555; background:#eef; padding:4px 8px; border-radius:3px; display:block; margin:6px 0; word-break:break-all;}
+  .url{font-family:monospace; font-size:13px; color:#555; background:#f0f0f0; padding:4px 8px; border-radius:3px; display:block; margin:6px 0; word-break:break-all;}
   details{margin-top:6px;}
   summary{cursor:pointer; font-size:13px; color:#444; user-select:none; padding:2px 0;}
   details pre{margin-top:4px;}
 </style>
 </head>
 <body>
+<header style="background:#B8002F;padding:12px 24px;display:flex;align-items:center;margin-bottom:24px;">
+  <img src="/logo.png" style="height:35px;width:auto;" alt="Ping Identity">
+</header>
+<div style="padding:32px 40px; max-width:900px; margin:0 auto;">
 {{.Body}}
+</div>
 </body>
 </html>`
 

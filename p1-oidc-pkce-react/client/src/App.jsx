@@ -1,4 +1,24 @@
 import React, { useState, useEffect } from 'react';
+import logoSrc from './logo.png';
+
+const styles = {
+  header: {
+    background: '#B8002F',
+    padding: '12px 24px',
+    display: 'flex',
+    alignItems: 'center',
+    marginBottom: 0,
+  },
+  logo: {
+    height: 35,
+    width: 'auto',
+  },
+  pageWrap: {
+    padding: '32px 40px',
+    maxWidth: 900,
+    margin: '0 auto',
+  },
+};
 
 function StepCard({ card }) {
   return (
@@ -28,6 +48,19 @@ function StepCard({ card }) {
 
 function CardList({ cards }) {
   return <div>{cards.map((c, i) => <StepCard key={i} card={c} />)}</div>;
+}
+
+function PageShell({ children }) {
+  return (
+    <div>
+      <header style={styles.header}>
+        <img src={logoSrc} style={styles.logo} alt="Ping Identity" />
+      </header>
+      <div style={styles.pageWrap}>
+        {children}
+      </div>
+    </div>
+  );
 }
 
 export default function App() {
@@ -117,7 +150,7 @@ export default function App() {
 
   if (stage === 'start') {
     return (
-      <div>
+      <PageShell>
         <h2>OIDC Authorization Code + PKCE (confidential client)</h2>
         <p>
           This sample walks through every artifact in the OIDC Authorization Code flow with PKCE so
@@ -129,7 +162,7 @@ export default function App() {
         </p>
         <button
           onClick={handleBeginLogin}
-          style={{ fontSize: 16, padding: '10px 20px', cursor: 'pointer' }}
+          style={{ fontSize: 16, padding: '10px 20px', cursor: 'pointer', background: '#E1003B', color: '#fff', border: 'none', borderRadius: 4 }}
         >
           Begin Login
         </button>
@@ -137,37 +170,45 @@ export default function App() {
           PingOne config required: OIDC Web App with PKCE Enforcement = REQUIRED, Token Endpoint Auth
           Method = Client Secret Basic, redirect URI = http://localhost:3000/callback
         </p>
-      </div>
+      </PageShell>
     );
   }
 
   if (stage === 'preparing') {
-    return <p>Preparing PKCE artifacts...</p>;
+    return (
+      <PageShell>
+        <p>Preparing PKCE artifacts...</p>
+      </PageShell>
+    );
   }
 
   if (stage === 'prepared') {
     return (
-      <div>
+      <PageShell>
         <h2>Step 1 — PKCE artifacts prepared</h2>
         <CardList cards={prepareCards} />
         <p style={{ marginTop: 24 }}>
           <a href={authorizeURL}>
-            <button style={{ fontSize: 16, padding: '10px 20px', cursor: 'pointer' }}>
+            <button style={{ fontSize: 16, padding: '10px 20px', cursor: 'pointer', background: '#E1003B', color: '#fff', border: 'none', borderRadius: 4 }}>
               Continue to PingOne →
             </button>
           </a>
         </p>
-      </div>
+      </PageShell>
     );
   }
 
   if (stage === 'loading-callback') {
-    return <p>Loading callback results...</p>;
+    return (
+      <PageShell>
+        <p>Loading callback results...</p>
+      </PageShell>
+    );
   }
 
   if (stage === 'callback-done') {
     return (
-      <div>
+      <PageShell>
         <h2>Prepare</h2>
         <CardList cards={prepareCards} />
         <h2 style={{ marginTop: 32 }}>Callback</h2>
@@ -176,7 +217,7 @@ export default function App() {
           <p style={{ marginTop: 24 }}>
             <button
               onClick={handleRefresh}
-              style={{ fontSize: 16, padding: '10px 20px', cursor: 'pointer' }}
+              style={{ fontSize: 16, padding: '10px 20px', cursor: 'pointer', background: '#E1003B', color: '#fff', border: 'none', borderRadius: 4 }}
             >
               Use refresh token →
             </button>
@@ -185,29 +226,33 @@ export default function App() {
         <p style={{ marginTop: 20 }}>
           <a href="#" onClick={e => { e.preventDefault(); handleStartOver(); }}>Start over</a>
         </p>
-      </div>
+      </PageShell>
     );
   }
 
   if (stage === 'refreshing') {
-    return <p>Refreshing...</p>;
+    return (
+      <PageShell>
+        <p>Refreshing...</p>
+      </PageShell>
+    );
   }
 
   if (stage === 'refresh-done') {
     return (
-      <div>
+      <PageShell>
         <h2>Refresh result</h2>
         <CardList cards={refreshCards} />
         <p style={{ marginTop: 20 }}>
           <a href="#" onClick={e => { e.preventDefault(); handleStartOver(); }}>Start over</a>
         </p>
-      </div>
+      </PageShell>
     );
   }
 
   // error stage
   return (
-    <div>
+    <PageShell>
       <h2 style={{ color: '#b00020' }}>Error</h2>
       <pre style={{ background: '#fff0f0', padding: 12, border: '1px solid #f00', borderRadius: 4 }}>
         {error}
@@ -218,6 +263,6 @@ export default function App() {
       >
         Start over
       </button>
-    </div>
+    </PageShell>
   );
 }

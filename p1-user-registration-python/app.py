@@ -1,4 +1,5 @@
 import os
+import base64
 import logging
 from urllib.parse import urlparse, parse_qs
 
@@ -7,6 +8,9 @@ from dotenv import load_dotenv
 from flask import Flask, request
 
 load_dotenv()
+
+_logo_path = os.path.join(os.path.dirname(__file__), '..', 'assets', 'logo.png')
+LOGO_SRC = 'data:image/png;base64,' + base64.b64encode(open(_logo_path, 'rb').read()).decode()
 
 ENV_ID = os.getenv("PINGONE_ENV_ID")
 CLIENT_ID = os.getenv("PINGONE_CLIENT_ID")
@@ -39,11 +43,15 @@ def cookie_header(store: list) -> str:
 
 # --- HTML templates ---
 
-INDEX_HTML = """
+INDEX_HTML = f"""
 <!DOCTYPE html>
 <html>
-<head><title>PingOne Demo</title><style>body{font-family:sans-serif; margin:40px;}</style></head>
+<head><title>PingOne Demo</title><style>body{{font-family:sans-serif; margin:0; background:#f5f5f5;}} button{{background:#E1003B; color:#fff; border:none; border-radius:4px; font-size:16px; padding:10px 20px; cursor:pointer;}}</style></head>
 <body>
+<header style="background:#B8002F;padding:12px 24px;display:flex;align-items:center;margin-bottom:0;">
+  <img src="{LOGO_SRC}" style="height:35px;width:auto;" alt="Ping Identity">
+</header>
+<div style="padding:32px 40px;max-width:900px;margin:0 auto;">
   <h2>Sign Up</h2>
   <form action="/register" method="POST">
     <label>Username:</label><br>
@@ -56,15 +64,20 @@ INDEX_HTML = """
   </form>
   <br><hr><br>
   <p>Already have an account? <a href="/login-page">Log in here</a></p>
+</div>
 </body>
 </html>
 """
 
-LOGIN_HTML = """
+LOGIN_HTML = f"""
 <!DOCTYPE html>
 <html>
-<head><title>Login</title><style>body{font-family:sans-serif; margin:40px;}</style></head>
+<head><title>Login</title><style>body{{font-family:sans-serif; margin:0; background:#f5f5f5;}} button{{background:#E1003B; color:#fff; border:none; border-radius:4px; font-size:16px; padding:10px 20px; cursor:pointer;}}</style></head>
 <body>
+<header style="background:#B8002F;padding:12px 24px;display:flex;align-items:center;margin-bottom:0;">
+  <img src="{LOGO_SRC}" style="height:35px;width:auto;" alt="Ping Identity">
+</header>
+<div style="padding:32px 40px;max-width:900px;margin:0 auto;">
   <h2>Login</h2>
   <form action="/login" method="POST">
     <label>Username:</label><br>
@@ -73,6 +86,7 @@ LOGIN_HTML = """
     <input type="password" name="password" required><br><br>
     <button type="submit">Log In</button>
   </form>
+</div>
 </body>
 </html>
 """
@@ -82,8 +96,12 @@ def verify_html(flow_id: str) -> str:
     return f"""
 <!DOCTYPE html>
 <html>
-<head><title>Verify Email</title><style>body{{font-family:sans-serif; margin:40px;}}</style></head>
+<head><title>Verify Email</title><style>body{{font-family:sans-serif; margin:0; background:#f5f5f5;}} button{{background:#E1003B; color:#fff; border:none; border-radius:4px; font-size:16px; padding:10px 20px; cursor:pointer;}}</style></head>
 <body>
+<header style="background:#B8002F;padding:12px 24px;display:flex;align-items:center;margin-bottom:0;">
+  <img src="{LOGO_SRC}" style="height:35px;width:auto;" alt="Ping Identity">
+</header>
+<div style="padding:32px 40px;max-width:900px;margin:0 auto;">
   <h2>Check Your Email</h2>
   <p>We've sent a 6-digit verification code to your email address.</p>
   <form action="/verify" method="POST">
@@ -92,19 +110,25 @@ def verify_html(flow_id: str) -> str:
     <input type="text" name="code" required><br><br>
     <button type="submit">Verify &amp; Complete</button>
   </form>
+</div>
 </body>
 </html>
 """
 
 
-SUCCESS_HTML = """
+SUCCESS_HTML = f"""
 <!DOCTYPE html>
 <html>
-<head><title>Success!</title><style>body{font-family:sans-serif; margin:40px;}</style></head>
+<head><title>Success!</title><style>body{{font-family:sans-serif; margin:0; background:#f5f5f5;}}</style></head>
 <body>
+<header style="background:#B8002F;padding:12px 24px;display:flex;align-items:center;margin-bottom:0;">
+  <img src="{LOGO_SRC}" style="height:35px;width:auto;" alt="Ping Identity">
+</header>
+<div style="padding:32px 40px;max-width:900px;margin:0 auto;">
   <h2 style="color: green;">Registration Complete!</h2>
   <p>Your account has been successfully created and verified via PingOne.</p>
   <a href="/login-page">Click here to Log In</a>
+</div>
 </body>
 </html>
 """
@@ -114,12 +138,17 @@ def dashboard_html(token: str) -> str:
     return f"""
 <!DOCTYPE html>
 <html>
-<head><title>Dashboard</title><style>body{{font-family:sans-serif; margin:40px;}} pre{{background:#eee; padding:15px;}}</style></head>
+<head><title>Dashboard</title><style>body{{font-family:sans-serif; margin:0; background:#f5f5f5;}} pre{{background:#eee; padding:15px;}}</style></head>
 <body>
+<header style="background:#B8002F;padding:12px 24px;display:flex;align-items:center;margin-bottom:0;">
+  <img src="{LOGO_SRC}" style="height:35px;width:auto;" alt="Ping Identity">
+</header>
+<div style="padding:32px 40px;max-width:900px;margin:0 auto;">
   <h2 style="color: blue;">Welcome to your Dashboard!</h2>
   <p>You have successfully authenticated. Here is your Access Token:</p>
   <pre style="white-space: pre-wrap; word-wrap: break-word;">{token}</pre>
   <a href="/">Log Out (Return to Home)</a>
+</div>
 </body>
 </html>
 """
@@ -129,11 +158,16 @@ def error_html(msg: str) -> str:
     return f"""
 <!DOCTYPE html>
 <html>
-<head><title>Error</title><style>body{{font-family:sans-serif; margin:40px;}}</style></head>
+<head><title>Error</title><style>body{{font-family:sans-serif; margin:0; background:#f5f5f5;}}</style></head>
 <body>
+<header style="background:#B8002F;padding:12px 24px;display:flex;align-items:center;margin-bottom:0;">
+  <img src="{LOGO_SRC}" style="height:35px;width:auto;" alt="Ping Identity">
+</header>
+<div style="padding:32px 40px;max-width:900px;margin:0 auto;">
   <h2 style="color: red;">Something went wrong</h2>
   <pre>{msg}</pre>
   <a href="/">Try Again</a>
+</div>
 </body>
 </html>
 """

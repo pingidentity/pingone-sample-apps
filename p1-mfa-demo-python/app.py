@@ -1,4 +1,5 @@
 import os
+import base64
 import logging
 from urllib.parse import urlparse, parse_qs
 
@@ -7,6 +8,9 @@ from dotenv import load_dotenv
 from flask import Flask, request
 
 load_dotenv()
+
+_logo_path = os.path.join(os.path.dirname(__file__), '..', 'assets', 'logo.png')
+LOGO_SRC = 'data:image/png;base64,' + base64.b64encode(open(_logo_path, 'rb').read()).decode()
 
 ENV_ID = os.getenv("PINGONE_ENV_ID")
 CLIENT_ID = os.getenv("PINGONE_CLIENT_ID")
@@ -62,11 +66,15 @@ def cookie_header(session: dict) -> str:
 
 # --- HTML templates ---
 
-INDEX_HTML = """
+INDEX_HTML = f"""
 <!DOCTYPE html>
 <html>
-<head><title>Login</title><style>body{font-family:sans-serif; margin:40px;}</style></head>
+<head><title>Login</title><style>body{{font-family:sans-serif; margin:0; background:#f5f5f5;}} button{{background:#E1003B; color:#fff; border:none; border-radius:4px; font-size:16px; padding:10px 20px; cursor:pointer;}}</style></head>
 <body>
+<header style="background:#B8002F;padding:12px 24px;display:flex;align-items:center;margin-bottom:0;">
+  <img src="{LOGO_SRC}" style="height:35px;width:auto;" alt="Ping Identity">
+</header>
+<div style="padding:32px 40px;max-width:900px;margin:0 auto;">
   <h2>Secure Login</h2>
   <form action="/login" method="POST">
     <label>Username:</label><br>
@@ -75,6 +83,7 @@ INDEX_HTML = """
     <input type="password" name="password" required><br><br>
     <button type="submit">Log In</button>
   </form>
+</div>
 </body>
 </html>
 """
@@ -84,8 +93,12 @@ def mfa_html(flow_id: str) -> str:
     return f"""
 <!DOCTYPE html>
 <html>
-<head><title>MFA Required</title><style>body{{font-family:sans-serif; margin:40px;}}</style></head>
+<head><title>MFA Required</title><style>body{{font-family:sans-serif; margin:0; background:#f5f5f5;}} button{{background:#E1003B; color:#fff; border:none; border-radius:4px; font-size:16px; padding:10px 20px; cursor:pointer;}}</style></head>
 <body>
+<header style="background:#B8002F;padding:12px 24px;display:flex;align-items:center;margin-bottom:0;">
+  <img src="{LOGO_SRC}" style="height:35px;width:auto;" alt="Ping Identity">
+</header>
+<div style="padding:32px 40px;max-width:900px;margin:0 auto;">
   <h2>Two-Factor Authentication</h2>
   <p>Please enter the verification code sent to your email.</p>
   <form action="/mfa-verify" method="POST">
@@ -94,6 +107,7 @@ def mfa_html(flow_id: str) -> str:
     <input type="text" name="otp" required><br><br>
     <button type="submit">Verify</button>
   </form>
+</div>
 </body>
 </html>
 """
@@ -103,12 +117,17 @@ def dashboard_html(token: str) -> str:
     return f"""
 <!DOCTYPE html>
 <html>
-<head><title>Dashboard</title><style>body{{font-family:sans-serif; margin:40px;}} pre{{background:#eee; padding:15px;}}</style></head>
+<head><title>Dashboard</title><style>body{{font-family:sans-serif; margin:0; background:#f5f5f5;}} pre{{background:#eee; padding:15px;}}</style></head>
 <body>
+<header style="background:#B8002F;padding:12px 24px;display:flex;align-items:center;margin-bottom:0;">
+  <img src="{LOGO_SRC}" style="height:35px;width:auto;" alt="Ping Identity">
+</header>
+<div style="padding:32px 40px;max-width:900px;margin:0 auto;">
   <h2 style="color: green;">Login Successful!</h2>
   <p>You have securely authenticated. Here is your Access Token:</p>
   <pre style="white-space: pre-wrap; word-wrap: break-word;">{token}</pre>
   <a href="/">Log Out</a>
+</div>
 </body>
 </html>
 """
@@ -118,11 +137,16 @@ def error_html(msg: str) -> str:
     return f"""
 <!DOCTYPE html>
 <html>
-<head><title>Error</title><style>body{{font-family:sans-serif; margin:40px;}}</style></head>
+<head><title>Error</title><style>body{{font-family:sans-serif; margin:0; background:#f5f5f5;}}</style></head>
 <body>
+<header style="background:#B8002F;padding:12px 24px;display:flex;align-items:center;margin-bottom:0;">
+  <img src="{LOGO_SRC}" style="height:35px;width:auto;" alt="Ping Identity">
+</header>
+<div style="padding:32px 40px;max-width:900px;margin:0 auto;">
   <h2 style="color: red;">Authentication Error</h2>
   <pre>{msg}</pre>
   <a href="/">Try Again</a>
+</div>
 </body>
 </html>
 """

@@ -1,4 +1,37 @@
 import React, { useState } from 'react';
+import logoSrc from './logo.png';
+
+const styles = {
+  header: {
+    background: '#B8002F',
+    padding: '12px 24px',
+    display: 'flex',
+    alignItems: 'center',
+    marginBottom: 0,
+  },
+  logo: {
+    height: 35,
+    width: 'auto',
+  },
+  pageWrap: {
+    padding: '32px 40px',
+    maxWidth: 900,
+    margin: '0 auto',
+  },
+};
+
+function PageShell({ children }) {
+  return (
+    <div>
+      <header style={styles.header}>
+        <img src={logoSrc} style={styles.logo} alt="Ping Identity" />
+      </header>
+      <div style={styles.pageWrap}>
+        {children}
+      </div>
+    </div>
+  );
+}
 
 export default function App() {
   const [stage, setStage] = useState('login'); // login | mfa | done | error
@@ -60,7 +93,7 @@ export default function App() {
 
   if (stage === 'login') {
     return (
-      <div>
+      <PageShell>
         <h2>Secure Login</h2>
         <form onSubmit={handleLogin}>
           <label>Username:</label><br />
@@ -69,13 +102,13 @@ export default function App() {
           <input type="password" value={password} onChange={e => setPassword(e.target.value)} required /><br /><br />
           <button type="submit">Log In</button>
         </form>
-      </div>
+      </PageShell>
     );
   }
 
   if (stage === 'mfa') {
     return (
-      <div>
+      <PageShell>
         <h2>Two-Factor Authentication</h2>
         <p>Please enter the verification code sent to your email.</p>
         <form onSubmit={handleMfa}>
@@ -83,26 +116,26 @@ export default function App() {
           <input value={otp} onChange={e => setOtp(e.target.value)} required /><br /><br />
           <button type="submit">Verify</button>
         </form>
-      </div>
+      </PageShell>
     );
   }
 
   if (stage === 'done') {
     return (
-      <div>
+      <PageShell>
         <h2 style={{ color: 'green' }}>Login Successful!</h2>
         <p>You have securely authenticated. Here is your Access Token:</p>
         <pre style={{ background: '#eee', padding: 15, whiteSpace: 'pre-wrap', wordWrap: 'break-word' }}>{accessToken}</pre>
         <button onClick={reset}>Log Out</button>
-      </div>
+      </PageShell>
     );
   }
 
   return (
-    <div>
+    <PageShell>
       <h2 style={{ color: 'red' }}>Authentication Error</h2>
       <pre>{error}</pre>
       <button onClick={reset}>Try Again</button>
-    </div>
+    </PageShell>
   );
 }

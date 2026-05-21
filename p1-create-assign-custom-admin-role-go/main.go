@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -15,6 +16,9 @@ import (
 
 	"github.com/joho/godotenv"
 )
+
+//go:embed logo.png
+var logoPNG []byte
 
 var (
 	adminEnvID        string
@@ -41,6 +45,10 @@ func main() {
 		log.Fatal("Missing required environment variables. Please check your .env file.")
 	}
 
+	http.HandleFunc("/logo.png", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		w.Write(logoPNG)
+	})
 	http.HandleFunc("/", handleIndex)
 	http.HandleFunc("/run", handleRun)
 
@@ -56,8 +64,9 @@ const indexHTML = `
 <head>
 <title>PingOne Custom Admin Role Workflow</title>
 <style>
-  body{font-family:sans-serif; margin:40px; max-width:900px;}
-  button{font-size:16px; padding:10px 20px; cursor:pointer;}
+  body{font-family:sans-serif; margin:0; background:#f5f5f5;}
+  button{font-size:16px; padding:10px 20px; cursor:pointer; background:#E1003B; color:#fff; border:none; border-radius:4px;}
+  button:hover{background:#b8002f;}
   pre{background:#f4f4f4; padding:12px; border-left:3px solid #888; white-space:pre-wrap; word-wrap:break-word;}
   .step{margin-top:18px;}
   .step h3{margin:0 0 6px 0;}
@@ -66,9 +75,14 @@ const indexHTML = `
 </style>
 </head>
 <body>
+<header style="background:#B8002F;padding:12px 24px;display:flex;align-items:center;margin-bottom:24px;">
+  <img src="/logo.png" style="height:35px;width:auto;" alt="Ping Identity">
+</header>
+<div style="padding:32px 40px; max-width:900px; margin:0 auto;">
   <h2>Custom Admin Role Workflow</h2>
   <p>Creates a trimmed-down application admin role, assigns it to a group scoped to a population, registers a user into that population, and verifies the inherited role assignment.</p>
   <form action="/run" method="POST"><button type="submit">Run Workflow</button></form>
+</div>
 </body>
 </html>`
 
@@ -78,9 +92,11 @@ const resultsHTML = `
 <head>
 <title>Workflow Result</title>
 <style>
-  body{font-family:sans-serif; margin:40px; max-width:900px;}
+  body{font-family:sans-serif; margin:0; background:#f5f5f5;}
+  button{font-size:16px; padding:10px 20px; cursor:pointer; background:#E1003B; color:#fff; border:none; border-radius:4px;}
+  button:hover{background:#b8002f;}
   pre{background:#f4f4f4; padding:12px; border-left:3px solid #888; white-space:pre-wrap; word-wrap:break-word; margin:0;}
-  .step{margin-top:18px;}
+  .step{margin-top:18px; padding:14px 16px; border:1px solid #ddd; border-radius:4px; background:#fff;}
   .step h3{margin:0 0 6px 0;}
   .ok{color:#0a7a0a;}
   .err{color:#b00020;}
@@ -94,6 +110,10 @@ const resultsHTML = `
 </style>
 </head>
 <body>
+<header style="background:#B8002F;padding:12px 24px;display:flex;align-items:center;margin-bottom:24px;">
+  <img src="/logo.png" style="height:35px;width:auto;" alt="Ping Identity">
+</header>
+<div style="padding:32px 40px; max-width:900px; margin:0 auto;">
   <h2>Workflow Result</h2>
   {{if .Success}}<div class="banner ok">All steps completed successfully.</div>{{else}}<div class="banner err">Workflow halted on error.</div>{{end}}
   {{range .Steps}}
@@ -105,6 +125,7 @@ const resultsHTML = `
     </div>
   {{end}}
   <p><a href="/">Back</a></p>
+</div>
 </body>
 </html>`
 

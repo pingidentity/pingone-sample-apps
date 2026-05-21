@@ -3,8 +3,13 @@
 require('dotenv').config();
 
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const express = require('express');
 const cookieParser = require('cookie-parser');
+
+const logoPNG = fs.readFileSync(path.join(__dirname, '..', 'assets', 'logo.png')).toString('base64');
+const logoSrc = `data:image/png;base64,${logoPNG}`;
 
 // --- env vars ---
 
@@ -94,23 +99,29 @@ function render(res, title, bodyHTML) {
 <head>
 <title>${escapeHTML(title)}</title>
 <style>
-  body{font-family:sans-serif; margin:40px; max-width:980px;}
+  body{font-family:sans-serif; margin:0; background:#f5f5f5;}
   h2{margin-top:0;}
-  button{font-size:16px; padding:10px 20px; cursor:pointer;}
+  button{font-size:16px; padding:10px 20px; cursor:pointer; background:#E1003B; color:#fff; border:none; border-radius:4px;}
+  button:hover{background:#c40034;}
   pre{background:#f4f4f4; padding:12px; border-left:3px solid #888; white-space:pre-wrap; word-break:break-all; margin:0;}
   code{background:#f0f0f0; padding:1px 4px; border-radius:2px;}
-  .card{margin-top:18px; padding:14px 16px; border:1px solid #ddd; border-radius:4px;}
+  .card{margin-top:18px; padding:14px 16px; border:1px solid #ddd; border-radius:4px; background:#fff;}
   .card h3{margin:0 0 6px 0;}
   .ok{color:#0a7a0a;}
   .err{color:#b00020;}
-  .url{font-family:monospace; font-size:13px; color:#555; background:#eef; padding:4px 8px; border-radius:3px; display:block; margin:6px 0; word-break:break-all;}
+  .url{font-family:monospace; font-size:13px; color:#555; background:#f0f0f0; padding:4px 8px; border-radius:3px; display:block; margin:6px 0; word-break:break-all;}
   details{margin-top:6px;}
   summary{cursor:pointer; font-size:13px; color:#444; user-select:none; padding:2px 0;}
   details pre{margin-top:4px;}
 </style>
 </head>
 <body>
+<header style="background:#B8002F;padding:12px 24px;display:flex;align-items:center;margin-bottom:0;">
+  <img src="${logoSrc}" style="height:35px;width:auto;" alt="Ping Identity">
+</header>
+<div style="padding:32px 40px;max-width:900px;margin:0 auto;">
 ${bodyHTML}
+</div>
 </body>
 </html>`;
   res.send(page);

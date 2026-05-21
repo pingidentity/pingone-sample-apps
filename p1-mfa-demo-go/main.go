@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -14,6 +15,9 @@ import (
 
 	"github.com/joho/godotenv"
 )
+
+//go:embed logo.png
+var logoPNG []byte
 
 var (
 	envID        string
@@ -128,6 +132,10 @@ func main() {
 	}
 	log.Println("Admin token smoke-test passed.")
 
+	http.HandleFunc("/logo.png", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		w.Write(logoPNG)
+	})
 	http.HandleFunc("/", handleIndex)
 	http.HandleFunc("/login", handleLogin)
 	http.HandleFunc("/mfa-verify", handleMFAVerify)
@@ -141,8 +149,12 @@ func main() {
 const indexHTML = `
 <!DOCTYPE html>
 <html>
-<head><title>Login</title><style>body{font-family:sans-serif; margin:40px;}</style></head>
+<head><title>Login</title><style>body{font-family:sans-serif; margin:0; background:#f5f5f5;} button{font-size:16px; padding:10px 20px; cursor:pointer; background:#E1003B; color:#fff; border:none; border-radius:4px;} button:hover{background:#b8002f;}</style></head>
 <body>
+<header style="background:#B8002F;padding:12px 24px;display:flex;align-items:center;margin-bottom:24px;">
+  <img src="/logo.png" style="height:35px;width:auto;" alt="Ping Identity">
+</header>
+<div style="padding:32px 40px; max-width:900px; margin:0 auto;">
     <h2>Secure Login</h2>
     <form action="/login" method="POST">
         <label>Username:</label><br>
@@ -151,14 +163,19 @@ const indexHTML = `
         <input type="password" name="password" required><br><br>
         <button type="submit">Log In</button>
     </form>
+</div>
 </body>
 </html>`
 
 const mfaHTML = `
 <!DOCTYPE html>
 <html>
-<head><title>MFA Required</title><style>body{font-family:sans-serif; margin:40px;}</style></head>
+<head><title>MFA Required</title><style>body{font-family:sans-serif; margin:0; background:#f5f5f5;} button{font-size:16px; padding:10px 20px; cursor:pointer; background:#E1003B; color:#fff; border:none; border-radius:4px;} button:hover{background:#b8002f;}</style></head>
 <body>
+<header style="background:#B8002F;padding:12px 24px;display:flex;align-items:center;margin-bottom:24px;">
+  <img src="/logo.png" style="height:35px;width:auto;" alt="Ping Identity">
+</header>
+<div style="padding:32px 40px; max-width:900px; margin:0 auto;">
     <h2>Two-Factor Authentication</h2>
     <p>Please enter the verification code sent to your email.</p>
     <form action="/mfa-verify" method="POST">
@@ -167,29 +184,40 @@ const mfaHTML = `
         <input type="text" name="otp" required><br><br>
         <button type="submit">Verify</button>
     </form>
+</div>
 </body>
 </html>`
 
 const dashboardHTML = `
 <!DOCTYPE html>
 <html>
-<head><title>Dashboard</title><style>body{font-family:sans-serif; margin:40px;} pre{background:#eee; padding:15px;}</style></head>
+<head><title>Dashboard</title><style>body{font-family:sans-serif; margin:0; background:#f5f5f5;} pre{background:#f4f4f4; padding:12px; border-left:3px solid #888; white-space:pre-wrap; word-break:break-all;}</style></head>
 <body>
-    <h2 style="color: green;">Login Successful!</h2>
+<header style="background:#B8002F;padding:12px 24px;display:flex;align-items:center;margin-bottom:24px;">
+  <img src="/logo.png" style="height:35px;width:auto;" alt="Ping Identity">
+</header>
+<div style="padding:32px 40px; max-width:900px; margin:0 auto;">
+    <h2 style="color:#0a7a0a;">Login Successful!</h2>
     <p>You have securely authenticated. Here is your Access Token:</p>
-    <pre style="white-space: pre-wrap; word-wrap: break-word;">{{.Token}}</pre>
+    <pre>{{.Token}}</pre>
     <a href="/">Log Out</a>
+</div>
 </body>
 </html>`
 
 const errorHTML = `
 <!DOCTYPE html>
 <html>
-<head><title>Error</title><style>body{font-family:sans-serif; margin:40px;}</style></head>
+<head><title>Error</title><style>body{font-family:sans-serif; margin:0; background:#f5f5f5;} pre{background:#f4f4f4; padding:12px; border-left:3px solid #888; white-space:pre-wrap; word-break:break-all;}</style></head>
 <body>
-    <h2 style="color: red;">Authentication Error</h2>
+<header style="background:#B8002F;padding:12px 24px;display:flex;align-items:center;margin-bottom:24px;">
+  <img src="/logo.png" style="height:35px;width:auto;" alt="Ping Identity">
+</header>
+<div style="padding:32px 40px; max-width:900px; margin:0 auto;">
+    <h2 style="color:#b00020;">Authentication Error</h2>
     <pre>{{.Error}}</pre>
     <a href="/">Try Again</a>
+</div>
 </body>
 </html>`
 

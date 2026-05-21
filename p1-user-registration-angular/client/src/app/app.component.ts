@@ -16,6 +16,11 @@ interface ApiResponse {
   standalone: true,
   imports: [FormsModule],
   template: `
+    <div>
+      <header style="background:#B8002F;padding:12px 24px;display:flex;align-items:center;margin-bottom:0;">
+        <img [src]="logoSrc" style="height:35px;width:auto;" alt="Ping Identity">
+      </header>
+      <div style="padding:32px 40px;max-width:900px;margin:0 auto;">
     @switch (stage) {
       @case ('signup') {
         <div>
@@ -79,11 +84,14 @@ interface ApiResponse {
         </div>
       }
     }
+      </div>
+    </div>
   `,
 })
 export class AppComponent {
   private http = inject(HttpClient);
 
+  logoSrc = 'assets/logo.png';
   stage: Stage = 'signup';
   username = '';
   email = '';

@@ -2,6 +2,7 @@ import html
 import json
 import logging
 import os
+import base64
 import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
@@ -11,6 +12,9 @@ from dotenv import load_dotenv
 from flask import Flask, request
 
 load_dotenv()
+
+_logo_path = os.path.join(os.path.dirname(__file__), '..', 'assets', 'logo.png')
+LOGO_SRC = 'data:image/png;base64,' + base64.b64encode(open(_logo_path, 'rb').read()).decode()
 
 ADMIN_ENV_ID = (os.getenv("PINGONE_ADMIN_ENV_ID") or "").strip()
 ADMIN_CLIENT_ID = (os.getenv("PINGONE_ADMIN_CLIENT_ID") or "").strip()
@@ -44,24 +48,29 @@ class StepResult:
 # HTML templates
 # ---------------------------------------------------------------------------
 
-INDEX_HTML = """<!DOCTYPE html>
+INDEX_HTML = f"""<!DOCTYPE html>
 <html>
 <head>
 <title>PingOne Custom Admin Role Workflow</title>
 <style>
-  body{font-family:sans-serif; margin:40px; max-width:900px;}
-  button{font-size:16px; padding:10px 20px; cursor:pointer;}
-  pre{background:#f4f4f4; padding:12px; border-left:3px solid #888; white-space:pre-wrap; word-wrap:break-word;}
-  .step{margin-top:18px;}
-  .step h3{margin:0 0 6px 0;}
-  .ok{color:#0a7a0a;}
-  .err{color:#b00020;}
+  body{{font-family:sans-serif; margin:0; background:#f5f5f5;}}
+  button{{font-size:16px; padding:10px 20px; cursor:pointer; background:#E1003B; color:#fff; border:none; border-radius:4px;}}
+  pre{{background:#f4f4f4; padding:12px; border-left:3px solid #888; white-space:pre-wrap; word-wrap:break-word;}}
+  .step{{margin-top:18px;}}
+  .step h3{{margin:0 0 6px 0;}}
+  .ok{{color:#0a7a0a;}}
+  .err{{color:#b00020;}}
 </style>
 </head>
 <body>
+<header style="background:#B8002F;padding:12px 24px;display:flex;align-items:center;margin-bottom:0;">
+  <img src="{LOGO_SRC}" style="height:35px;width:auto;" alt="Ping Identity">
+</header>
+<div style="padding:32px 40px;max-width:900px;margin:0 auto;">
   <h2>Custom Admin Role Workflow</h2>
   <p>Creates a trimmed-down application admin role, assigns it to a group scoped to a population, registers a user into that population, and verifies the inherited role assignment.</p>
   <form action="/run" method="POST"><button type="submit">Run Workflow</button></form>
+</div>
 </body>
 </html>"""
 
@@ -96,7 +105,7 @@ def results_html(success: bool, steps: list[StepResult]) -> str:
 <head>
 <title>Workflow Result</title>
 <style>
-  body{{font-family:sans-serif; margin:40px; max-width:900px;}}
+  body{{font-family:sans-serif; margin:0; background:#f5f5f5;}}
   pre{{background:#f4f4f4; padding:12px; border-left:3px solid #888; white-space:pre-wrap; word-wrap:break-word; margin:0;}}
   .step{{margin-top:18px;}}
   .step h3{{margin:0 0 6px 0;}}
@@ -112,10 +121,15 @@ def results_html(success: bool, steps: list[StepResult]) -> str:
 </style>
 </head>
 <body>
+<header style="background:#B8002F;padding:12px 24px;display:flex;align-items:center;margin-bottom:0;">
+  <img src="{LOGO_SRC}" style="height:35px;width:auto;" alt="Ping Identity">
+</header>
+<div style="padding:32px 40px;max-width:900px;margin:0 auto;">
   <h2>Workflow Result</h2>
   <div class="banner {banner_class}">{banner_text}</div>
 {steps_html}
   <p><a href="/">Back</a></p>
+</div>
 </body>
 </html>"""
 

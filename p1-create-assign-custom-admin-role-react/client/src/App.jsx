@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import logoSrc from './logo.png';
 
 const OK_COLOR  = '#0a7a0a';
 const ERR_COLOR = '#b00020';
@@ -6,11 +7,27 @@ const ERR_COLOR = '#b00020';
 const styles = {
   h2: { marginBottom: 8 },
   description: { color: '#444', marginBottom: 24 },
+  header: {
+    background: '#B8002F',
+    padding: '12px 24px',
+    display: 'flex',
+    alignItems: 'center',
+    marginBottom: 0,
+  },
+  logo: {
+    height: 35,
+    width: 'auto',
+  },
+  pageWrap: {
+    padding: '32px 40px',
+    maxWidth: 900,
+    margin: '0 auto',
+  },
   runBtn: {
     fontSize: 16,
     padding: '10px 24px',
     cursor: 'pointer',
-    background: '#0055a4',
+    background: '#E1003B',
     color: '#fff',
     border: 'none',
     borderRadius: 4,
@@ -117,12 +134,17 @@ export default function App() {
   if (stage === 'idle') {
     return (
       <div>
-        <h2 style={styles.h2}>Custom Admin Role Workflow</h2>
-        <p style={styles.description}>
-          Creates a trimmed-down application admin role, assigns it to a group scoped to a population,
-          registers a user into that population, and verifies the inherited role assignment.
-        </p>
-        <button style={styles.runBtn} onClick={runWorkflow}>Run Workflow</button>
+        <header style={styles.header}>
+          <img src={logoSrc} style={styles.logo} alt="Ping Identity" />
+        </header>
+        <div style={styles.pageWrap}>
+          <h2 style={styles.h2}>Custom Admin Role Workflow</h2>
+          <p style={styles.description}>
+            Creates a trimmed-down application admin role, assigns it to a group scoped to a population,
+            registers a user into that population, and verifies the inherited role assignment.
+          </p>
+          <button style={styles.runBtn} onClick={runWorkflow}>Run Workflow</button>
+        </div>
       </div>
     );
   }
@@ -130,8 +152,13 @@ export default function App() {
   if (stage === 'loading') {
     return (
       <div>
-        <h2 style={styles.h2}>Custom Admin Role Workflow</h2>
-        <p style={styles.loadingMsg}>Running workflow, please wait...</p>
+        <header style={styles.header}>
+          <img src={logoSrc} style={styles.logo} alt="Ping Identity" />
+        </header>
+        <div style={styles.pageWrap}>
+          <h2 style={styles.h2}>Custom Admin Role Workflow</h2>
+          <p style={styles.loadingMsg}>Running workflow, please wait...</p>
+        </div>
       </div>
     );
   }
@@ -139,14 +166,19 @@ export default function App() {
   // results stage
   return (
     <div>
-      <h2 style={styles.h2}>Workflow Result</h2>
-      <div style={styles.banner(result.success)}>
-        {result.success ? 'All steps completed successfully.' : 'Workflow halted on error.'}
+      <header style={styles.header}>
+        <img src={logoSrc} style={styles.logo} alt="Ping Identity" />
+      </header>
+      <div style={styles.pageWrap}>
+        <h2 style={styles.h2}>Workflow Result</h2>
+        <div style={styles.banner(result.success)}>
+          {result.success ? 'All steps completed successfully.' : 'Workflow halted on error.'}
+        </div>
+        {result.steps.map((step, i) => (
+          <StepCard key={i} step={step} />
+        ))}
+        <button style={styles.againBtn} onClick={reset}>Run Again</button>
       </div>
-      {result.steps.map((step, i) => (
-        <StepCard key={i} step={step} />
-      ))}
-      <button style={styles.againBtn} onClick={reset}>Run Again</button>
     </div>
   );
 }

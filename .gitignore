@@ -21,5 +21,10 @@ __pycache__/
 # Local reference docs (not for source control)
 POSTMAN_COLLECTIONS.md
 
+# Per-app logo copies (canonical is assets/logo.png)
+p1-*/logo.png
+p1-*/client/src/logo.png
+p1-*/client/src/assets/logo.png
+
 # macOS
 .DS_Store

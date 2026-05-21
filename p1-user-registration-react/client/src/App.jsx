@@ -1,4 +1,37 @@
 import React, { useState } from 'react';
+import logoSrc from './logo.png';
+
+const styles = {
+  header: {
+    background: '#B8002F',
+    padding: '12px 24px',
+    display: 'flex',
+    alignItems: 'center',
+    marginBottom: 0,
+  },
+  logo: {
+    height: 35,
+    width: 'auto',
+  },
+  pageWrap: {
+    padding: '32px 40px',
+    maxWidth: 900,
+    margin: '0 auto',
+  },
+};
+
+function PageShell({ children }) {
+  return (
+    <div>
+      <header style={styles.header}>
+        <img src={logoSrc} style={styles.logo} alt="Ping Identity" />
+      </header>
+      <div style={styles.pageWrap}>
+        {children}
+      </div>
+    </div>
+  );
+}
 
 export default function App() {
   // stages: signup | verify | login | success | dashboard | error
@@ -54,7 +87,7 @@ export default function App() {
 
   if (stage === 'signup') {
     return (
-      <div>
+      <PageShell>
         <h2>Sign Up</h2>
         <form onSubmit={handleRegister}>
           <label>Username:</label><br />
@@ -67,13 +100,13 @@ export default function App() {
         </form>
         <br /><hr /><br />
         <p>Already have an account? <a href="#" onClick={(e) => { e.preventDefault(); setStage('login'); setPassword(''); }}>Log in here</a></p>
-      </div>
+      </PageShell>
     );
   }
 
   if (stage === 'verify') {
     return (
-      <div>
+      <PageShell>
         <h2>Check Your Email</h2>
         <p>We've sent a 6-digit verification code to your email address.</p>
         <form onSubmit={handleVerify}>
@@ -81,13 +114,13 @@ export default function App() {
           <input value={code} onChange={e => setCode(e.target.value)} required /><br /><br />
           <button type="submit">Verify &amp; Complete</button>
         </form>
-      </div>
+      </PageShell>
     );
   }
 
   if (stage === 'login') {
     return (
-      <div>
+      <PageShell>
         <h2>Login</h2>
         <form onSubmit={handleLogin}>
           <label>Username:</label><br />
@@ -96,36 +129,36 @@ export default function App() {
           <input type="password" value={password} onChange={e => setPassword(e.target.value)} required /><br /><br />
           <button type="submit">Log In</button>
         </form>
-      </div>
+      </PageShell>
     );
   }
 
   if (stage === 'success') {
     return (
-      <div>
+      <PageShell>
         <h2 style={{ color: 'green' }}>Registration Complete!</h2>
         <p>Your account has been successfully created and verified via PingOne.</p>
         <a href="#" onClick={(e) => { e.preventDefault(); setStage('login'); setPassword(''); setCode(''); }}>Click here to Log In</a>
-      </div>
+      </PageShell>
     );
   }
 
   if (stage === 'dashboard') {
     return (
-      <div>
+      <PageShell>
         <h2 style={{ color: 'blue' }}>Welcome to your Dashboard!</h2>
         <p>You have successfully authenticated. Here is your Access Token:</p>
         <pre style={{ background: '#eee', padding: 15, whiteSpace: 'pre-wrap', wordWrap: 'break-word' }}>{accessToken}</pre>
         <button onClick={reset}>Log Out (Return to Home)</button>
-      </div>
+      </PageShell>
     );
   }
 
   return (
-    <div>
+    <PageShell>
       <h2 style={{ color: 'red' }}>Something went wrong</h2>
       <pre>{error}</pre>
       <button onClick={reset}>Try Again</button>
-    </div>
+    </PageShell>
   );
 }

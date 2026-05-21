@@ -1,5 +1,10 @@
 require('dotenv').config();
+const fs = require('fs');
+const path = require('path');
 const express = require('express');
+
+const logoPNG = fs.readFileSync(path.join(__dirname, '..', 'assets', 'logo.png')).toString('base64');
+const logoSrc = `data:image/png;base64,${logoPNG}`;
 
 const envID = process.env.PINGONE_ENV_ID;
 const clientID = process.env.PINGONE_CLIENT_ID;
@@ -34,8 +39,12 @@ const cookieHeader = (store) => store.join('; ');
 const indexHTML = `
 <!DOCTYPE html>
 <html>
-<head><title>PingOne Demo</title><style>body{font-family:sans-serif; margin:40px;}</style></head>
+<head><title>PingOne Demo</title><style>body{font-family:sans-serif; margin:0; background:#f5f5f5;} button{background:#E1003B; color:#fff; border:none; border-radius:4px; font-size:15px; padding:10px 20px; cursor:pointer;} button:hover{background:#c40034;}</style></head>
 <body>
+<header style="background:#B8002F;padding:12px 24px;display:flex;align-items:center;margin-bottom:0;">
+  <img src="${logoSrc}" style="height:35px;width:auto;" alt="Ping Identity">
+</header>
+<div style="padding:32px 40px;max-width:900px;margin:0 auto;">
   <h2>Sign Up</h2>
   <form action="/register" method="POST">
     <label>Username:</label><br>
@@ -48,14 +57,19 @@ const indexHTML = `
   </form>
   <br><hr><br>
   <p>Already have an account? <a href="/login-page">Log in here</a></p>
+</div>
 </body>
 </html>`;
 
 const loginHTML = `
 <!DOCTYPE html>
 <html>
-<head><title>Login</title><style>body{font-family:sans-serif; margin:40px;}</style></head>
+<head><title>Login</title><style>body{font-family:sans-serif; margin:0; background:#f5f5f5;} button{background:#E1003B; color:#fff; border:none; border-radius:4px; font-size:15px; padding:10px 20px; cursor:pointer;} button:hover{background:#c40034;}</style></head>
 <body>
+<header style="background:#B8002F;padding:12px 24px;display:flex;align-items:center;margin-bottom:0;">
+  <img src="${logoSrc}" style="height:35px;width:auto;" alt="Ping Identity">
+</header>
+<div style="padding:32px 40px;max-width:900px;margin:0 auto;">
   <h2>Login</h2>
   <form action="/login" method="POST">
     <label>Username:</label><br>
@@ -64,14 +78,19 @@ const loginHTML = `
     <input type="password" name="password" required><br><br>
     <button type="submit">Log In</button>
   </form>
+</div>
 </body>
 </html>`;
 
 const verifyHTML = (flowID) => `
 <!DOCTYPE html>
 <html>
-<head><title>Verify Email</title><style>body{font-family:sans-serif; margin:40px;}</style></head>
+<head><title>Verify Email</title><style>body{font-family:sans-serif; margin:0; background:#f5f5f5;} button{background:#E1003B; color:#fff; border:none; border-radius:4px; font-size:15px; padding:10px 20px; cursor:pointer;} button:hover{background:#c40034;}</style></head>
 <body>
+<header style="background:#B8002F;padding:12px 24px;display:flex;align-items:center;margin-bottom:0;">
+  <img src="${logoSrc}" style="height:35px;width:auto;" alt="Ping Identity">
+</header>
+<div style="padding:32px 40px;max-width:900px;margin:0 auto;">
   <h2>Check Your Email</h2>
   <p>We've sent a 6-digit verification code to your email address.</p>
   <form action="/verify" method="POST">
@@ -80,40 +99,56 @@ const verifyHTML = (flowID) => `
     <input type="text" name="code" required><br><br>
     <button type="submit">Verify &amp; Complete</button>
   </form>
+</div>
 </body>
 </html>`;
 
 const successHTML = `
 <!DOCTYPE html>
 <html>
-<head><title>Success!</title><style>body{font-family:sans-serif; margin:40px;}</style></head>
+<head><title>Success!</title><style>body{font-family:sans-serif; margin:0; background:#f5f5f5;}</style></head>
 <body>
-  <h2 style="color: green;">Registration Complete!</h2>
+<header style="background:#B8002F;padding:12px 24px;display:flex;align-items:center;margin-bottom:0;">
+  <img src="${logoSrc}" style="height:35px;width:auto;" alt="Ping Identity">
+</header>
+<div style="padding:32px 40px;max-width:900px;margin:0 auto;">
+  <h2 style="color:#0a7a0a;">Registration Complete!</h2>
   <p>Your account has been successfully created and verified via PingOne.</p>
   <a href="/login-page">Click here to Log In</a>
+</div>
 </body>
 </html>`;
 
 const dashboardHTML = (token) => `
 <!DOCTYPE html>
 <html>
-<head><title>Dashboard</title><style>body{font-family:sans-serif; margin:40px;} pre{background:#eee; padding:15px;}</style></head>
+<head><title>Dashboard</title><style>body{font-family:sans-serif; margin:0; background:#f5f5f5;} pre{background:#f4f4f4; padding:12px; border-left:3px solid #888;}</style></head>
 <body>
-  <h2 style="color: blue;">Welcome to your Dashboard!</h2>
+<header style="background:#B8002F;padding:12px 24px;display:flex;align-items:center;margin-bottom:0;">
+  <img src="${logoSrc}" style="height:35px;width:auto;" alt="Ping Identity">
+</header>
+<div style="padding:32px 40px;max-width:900px;margin:0 auto;">
+  <h2>Welcome to your Dashboard!</h2>
   <p>You have successfully authenticated. Here is your Access Token:</p>
   <pre style="white-space: pre-wrap; word-wrap: break-word;">${token}</pre>
   <a href="/">Log Out (Return to Home)</a>
+</div>
 </body>
 </html>`;
 
 const errorHTML = (msg) => `
 <!DOCTYPE html>
 <html>
-<head><title>Error</title><style>body{font-family:sans-serif; margin:40px;}</style></head>
+<head><title>Error</title><style>body{font-family:sans-serif; margin:0; background:#f5f5f5;} pre{background:#f4f4f4; padding:12px; border-left:3px solid #888;}</style></head>
 <body>
-  <h2 style="color: red;">Something went wrong</h2>
+<header style="background:#B8002F;padding:12px 24px;display:flex;align-items:center;margin-bottom:0;">
+  <img src="${logoSrc}" style="height:35px;width:auto;" alt="Ping Identity">
+</header>
+<div style="padding:32px 40px;max-width:900px;margin:0 auto;">
+  <h2 style="color:#b00020;">Something went wrong</h2>
   <pre>${msg}</pre>
   <a href="/">Try Again</a>
+</div>
 </body>
 </html>`;
 
