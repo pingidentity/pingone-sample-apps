@@ -286,11 +286,26 @@ func runRiskAndGate(accessToken, riskURL, mgmtURL string, riskBody map[string]in
 	userType, _ := eventUser["type"].(string)
 	eventIP, _ := riskBody["event"].(map[string]interface{})["ip"].(string)
 
-	cards = append(cards, card{
-		Title: fmt.Sprintf("%s. PingOne Protect risk evaluation", riskStep),
-		OK:    riskOK,
-		URL:   "POST " + riskURL,
-		Detail: template.HTML(fmt.Sprintf(
+	var riskDetail string
+	if riskStep == "7b" {
+		riskDetail = fmt.Sprintf(
+			`<strong>This evaluation is intentionally constructed to trigger a HIGH risk score.</strong><br><br>`+
+				`The IP <code>%s</code> is a known Tor exit node. Tor is an anonymizing network commonly associated with `+
+				`attempts to obscure origin and bypass geo-controls. PingOne Protect's <strong>Anonymous Network Detection</strong> `+
+				`predictor recognises this IP and scores it at <strong>80</strong> — above the policy set's HIGH threshold of 75 — `+
+				`causing the overall evaluation to return HIGH.<br><br>`+
+				`user.type is set to <code>ANONYMOUS</code> and a bot-like user agent is supplied to further reflect `+
+				`what a real suspicious M2M caller might look like. In production you would populate these fields from `+
+				`the actual upstream caller rather than hardcoding them.<br><br>`+
+				`SDK signals are omitted — there is no browser SDK in an M2M flow.<br>`+
+				`HTTP %d &middot; level: <code>%s</code> &middot; score: <code>%s</code>`,
+			template.HTMLEscapeString(eventIP),
+			riskStatus,
+			template.HTMLEscapeString(level),
+			template.HTMLEscapeString(score),
+		)
+	} else {
+		riskDetail = fmt.Sprintf(
 			`Event: ip=<code>%s</code>, user.type=<code>%s</code>.<br>`+
 				`PingOne Protect scores the event against the configured risk policy set and returns a risk level (LOW / MEDIUM / HIGH) plus per-predictor details.<br>`+
 				`SDK signals are intentionally omitted — there is no browser SDK in an M2M flow.<br>`+
@@ -300,8 +315,15 @@ func runRiskAndGate(accessToken, riskURL, mgmtURL string, riskBody map[string]in
 			riskStatus,
 			template.HTMLEscapeString(level),
 			template.HTMLEscapeString(score),
-		)),
-		Body: fmt.Sprintf("request:\n%s\n\nresponse:\n%s", prettyAny(riskBody), prettyJSONOrRaw(riskRaw)),
+		)
+	}
+
+	cards = append(cards, card{
+		Title:  fmt.Sprintf("%s. PingOne Protect risk evaluation", riskStep),
+		OK:     riskOK,
+		URL:    "POST " + riskURL,
+		Detail: template.HTML(riskDetail),
+		Body:   fmt.Sprintf("request:\n%s\n\nresponse:\n%s", prettyAny(riskBody), prettyJSONOrRaw(riskRaw)),
 	})
 
 	if !riskOK {
