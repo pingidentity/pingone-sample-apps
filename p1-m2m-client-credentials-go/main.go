@@ -5,6 +5,7 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	_ "crypto/sha256"
+	_ "embed"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -21,6 +22,9 @@ import (
 
 	"github.com/joho/godotenv"
 )
+
+//go:embed logo.png
+var logoPNG []byte
 
 var (
 	envID           string
@@ -51,6 +55,10 @@ func main() {
 
 	http.HandleFunc("/", handleIndex)
 	http.HandleFunc("/run", handleRun)
+	http.HandleFunc("/logo.png", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		w.Write(logoPNG)
+	})
 
 	fmt.Println("M2M Client Credentials demo on http://localhost:3000")
 	log.Fatal(http.ListenAndServe(":3000", nil))
@@ -60,11 +68,15 @@ func main() {
 
 func handleIndex(w http.ResponseWriter, _ *http.Request) {
 	render(w, "M2M Client Credentials — start", `
-<h2>OAuth 2.0 Client Credentials (Machine-to-machine / Worker App) + PingOne Protect</h2>
-<p>This sample walks through the OAuth 2.0 <strong>client_credentials</strong> grant. There is no user, no browser redirect, and no PKCE. The client authenticates directly with the PingOne token endpoint using its own credentials, receives an access token, calls <strong>PingOne Protect</strong> for a risk evaluation, and — if the risk level is acceptable — calls the PingOne Management API.</p>
-<p>The client authenticates using <strong>HTTP Basic auth</strong> (client ID + secret).</p>
+<h2>OAuth 2.0 Client Credentials (M2M) + PingOne Protect</h2>
+<p>This sample walks through the OAuth 2.0 <strong>client_credentials</strong> grant. There is no user, no browser redirect, and no PKCE. The client authenticates directly with the PingOne token endpoint using its own credentials, receives an access token, and calls <strong>PingOne Protect</strong> for two risk evaluations:</p>
+<ul>
+  <li><strong>User A — trusted:</strong> real client IP, <code>type=EXTERNAL</code> — expected to score LOW or MEDIUM, API call proceeds.</li>
+  <li><strong>User B — suspicious:</strong> Tor exit node IP (<code>185.220.101.1</code>), <code>type=ANONYMOUS</code> — expected to score HIGH via Anonymous Network Detection, API call blocked.</li>
+</ul>
+<p>Both paths are rendered side-by-side so you can compare what PingOne Protect returns and see how the application gates the downstream call differently in each case.</p>
 <form action="/run" method="POST"><button type="submit">Run Flow</button></form>
-<p style="color:#666;font-size:13px;margin-top:30px;">PingOne config required: Worker application with Token Endpoint Auth Method = Client Secret Basic. The Worker app must have roles for both Identity Data (read) and PingOne Protect (risk evaluation). A Protect risk policy set must exist; its ID goes in <code>PINGONE_RISK_POLICY_SET_ID</code>.</p>
+<p style="color:#666;font-size:13px;margin-top:30px;">PingOne config required: Worker application with Token Endpoint Auth Method = Client Secret Basic. The Worker app must have roles for Identity Data (read) and PingOne Protect (risk evaluation). A Protect risk policy set must exist with Anonymous Network Detection enabled and scored above the HIGH threshold; its ID goes in <code>PINGONE_RISK_POLICY_SET_ID</code>.</p>
 `)
 }
 
@@ -187,36 +199,72 @@ func handleRun(w http.ResponseWriter, r *http.Request) {
 		Body: prettyAny(payload),
 	})
 
-	// 7. Call PingOne Protect for a risk evaluation.
 	riskURL := fmt.Sprintf("%s/v1/environments/%s/riskEvaluations", apiPath, envID)
+	mgmtURL := fmt.Sprintf("%s/v1/environments/%s/users", apiPath, envID)
+
+	// 7a. Risk evaluation — User A (trusted): real client IP, EXTERNAL type.
+	cards = append(cards, card{Divider: true, Title: "User A — trusted (real IP, type=EXTERNAL)"})
+
 	clientIP := callerIP(r)
-	riskBody := map[string]interface{}{
+	riskBodyA := map[string]interface{}{
 		"event": map[string]interface{}{
-			"ip": clientIP,
-			"flow": map[string]interface{}{
-				"type": "AUTHENTICATION",
-			},
-			"session": map[string]interface{}{
-				"id": "m2m-demo-session",
-			},
+			"ip":   clientIP,
+			"flow": map[string]interface{}{"type": "AUTHENTICATION"},
+			"session": map[string]interface{}{"id": "m2m-demo-session-a"},
 			"user": map[string]interface{}{
-				"id":   "m2m-demo-user",
+				"id":   "m2m-user-trusted",
 				"type": "EXTERNAL",
-				"name": "m2m-demo-user",
+				"name": "m2m-user-trusted",
 			},
-			"browser": map[string]interface{}{
-				"userAgent": r.Header.Get("User-Agent"),
-			},
+			"browser":     map[string]interface{}{"userAgent": r.Header.Get("User-Agent")},
 			"sharingType": "SHARED",
 			"targetResource": map[string]interface{}{
 				"id":   "m2m-demo-resource",
 				"name": "m2m-demo-resource",
 			},
 		},
-		"riskPolicySet": map[string]interface{}{
-			"id": riskPolicySetID,
-		},
+		"riskPolicySet": map[string]interface{}{"id": riskPolicySetID},
 	}
+	riskLevelA, riskScoreA, riskCardsA := runRiskAndGate(accessToken, riskURL, mgmtURL, riskBodyA, "7a", "8a", r)
+	cards = append(cards, riskCardsA...)
+
+	// 7b. Risk evaluation — User B (suspicious): Tor exit node IP, ANONYMOUS type.
+	cards = append(cards, card{Divider: true, Title: "User B — suspicious (Tor IP, type=ANONYMOUS)"})
+
+	riskBodyB := map[string]interface{}{
+		"event": map[string]interface{}{
+			"ip":   "185.220.101.1", // known Tor exit node — triggers Anonymous Network Detection
+			"flow": map[string]interface{}{"type": "AUTHENTICATION"},
+			"session": map[string]interface{}{"id": "m2m-demo-session-b"},
+			"user": map[string]interface{}{
+				"id":   "m2m-user-suspicious",
+				"type": "ANONYMOUS",
+				"name": "m2m-user-suspicious",
+			},
+			"browser":     map[string]interface{}{"userAgent": "python-requests/2.28.0"}, // bot-like UA
+			"sharingType": "SHARED",
+			"targetResource": map[string]interface{}{
+				"id":   "m2m-demo-resource",
+				"name": "m2m-demo-resource",
+			},
+		},
+		"riskPolicySet": map[string]interface{}{"id": riskPolicySetID},
+	}
+	riskLevelB, riskScoreB, riskCardsB := runRiskAndGate(accessToken, riskURL, mgmtURL, riskBodyB, "7b", "8b", r)
+	cards = append(cards, riskCardsB...)
+
+	_ = riskLevelA
+	_ = riskScoreA
+	_ = riskLevelB
+	_ = riskScoreB
+
+	render(w, "Run — complete", renderCards(cards)+`<p style="margin-top:20px;"><a href="/">Run again</a></p>`)
+}
+
+// runRiskAndGate calls the Protect risk evaluation endpoint with the supplied event body,
+// appends result cards, then either makes the downstream management API call (LOW/MEDIUM)
+// or shows a blocked card (HIGH). Returns the risk level, score, and the cards produced.
+func runRiskAndGate(accessToken, riskURL, mgmtURL string, riskBody map[string]interface{}, riskStep, mgmtStep string, r *http.Request) (level, score string, cards []card) {
 	riskBodyBytes, _ := json.Marshal(riskBody)
 	riskReq, _ := http.NewRequest("POST", riskURL, strings.NewReader(string(riskBodyBytes)))
 	riskReq.Header.Set("Authorization", "Bearer "+accessToken)
@@ -232,46 +280,53 @@ func handleRun(w http.ResponseWriter, r *http.Request) {
 		riskStatus = riskResp.StatusCode
 	}
 	riskOK := riskErr == nil && riskStatus < 400
-	riskLevel, riskScore := extractRiskResult(riskParsed)
+	level, score = extractRiskResult(riskParsed)
+
+	eventUser, _ := riskBody["event"].(map[string]interface{})["user"].(map[string]interface{})
+	userType, _ := eventUser["type"].(string)
+	eventIP, _ := riskBody["event"].(map[string]interface{})["ip"].(string)
+
 	cards = append(cards, card{
-		Title: "7. PingOne Protect risk evaluation",
+		Title: fmt.Sprintf("%s. PingOne Protect risk evaluation", riskStep),
 		OK:    riskOK,
 		URL:   "POST " + riskURL,
 		Detail: template.HTML(fmt.Sprintf(
-			`Posts an event describing the request to PingOne Protect, which scores it against the configured risk policy set and returns a risk level (LOW / MEDIUM / HIGH) plus per-predictor details.<br>`+
-				`In a real M2M setting you would populate <code>event.user</code>, <code>event.ip</code>, and <code>event.browser</code> with values from the upstream caller (whatever the service is acting on behalf of). This demo uses a hardcoded fake user (<code>m2m-demo-user</code>, <code>type=EXTERNAL</code>) and the request's own IP.<br>`+
-				`SDK signals (<code>sdk.signals.data</code>) are intentionally omitted — there is no browser SDK in an M2M flow.<br>`+
+			`Event: ip=<code>%s</code>, user.type=<code>%s</code>.<br>`+
+				`PingOne Protect scores the event against the configured risk policy set and returns a risk level (LOW / MEDIUM / HIGH) plus per-predictor details.<br>`+
+				`SDK signals are intentionally omitted — there is no browser SDK in an M2M flow.<br>`+
 				`HTTP %d &middot; level: <code>%s</code> &middot; score: <code>%s</code>`,
+			template.HTMLEscapeString(eventIP),
+			template.HTMLEscapeString(userType),
 			riskStatus,
-			template.HTMLEscapeString(riskLevel),
-			template.HTMLEscapeString(riskScore),
+			template.HTMLEscapeString(level),
+			template.HTMLEscapeString(score),
 		)),
 		Body: fmt.Sprintf("request:\n%s\n\nresponse:\n%s", prettyAny(riskBody), prettyJSONOrRaw(riskRaw)),
 	})
 
-	// 8. Call the PingOne Management API — gated on risk evaluation.
-	mgmtURL := fmt.Sprintf("%s/v1/environments/%s/users", apiPath, envID)
 	if !riskOK {
 		cards = append(cards, card{
-			Title:  "8. Call PingOne Management API",
+			Title:  fmt.Sprintf("%s. Call PingOne Management API", mgmtStep),
 			OK:     false,
 			URL:    "GET " + mgmtURL,
-			Detail: "Skipped — the risk evaluation step did not succeed, so the gated downstream call was not made.",
+			Detail: "Skipped — the risk evaluation step did not succeed.",
 		})
-		render(w, "Run — complete", renderCards(cards)+`<p style="margin-top:20px;"><a href="/">Start over</a></p>`)
 		return
 	}
-	if strings.EqualFold(riskLevel, "HIGH") {
+
+	if strings.EqualFold(level, "HIGH") {
 		cards = append(cards, card{
-			Title: "8. Call PingOne Management API",
+			Title: fmt.Sprintf("%s. Call PingOne Management API", mgmtStep),
 			OK:    false,
 			URL:   "GET " + mgmtURL,
 			Detail: template.HTML(fmt.Sprintf(
-				`Blocked — PingOne Protect returned risk level <code>%s</code>. The downstream management API call was gated on the risk result and was <strong>not</strong> made.<br><small>To see this branch fire, configure your risk policy set so the demo event scores as HIGH (e.g. add a predictor that flags the demo IP or user).</small>`,
-				template.HTMLEscapeString(riskLevel),
+				`<strong>Blocked.</strong> PingOne Protect returned risk level <code>%s</code> (score: <code>%s</code>). `+
+					`Anonymous Network Detection flagged the IP as a known Tor exit node. `+
+					`The downstream management API call was <strong>not</strong> made.`,
+				template.HTMLEscapeString(level),
+				template.HTMLEscapeString(score),
 			)),
 		})
-		render(w, "Run — complete", renderCards(cards)+`<p style="margin-top:20px;"><a href="/">Start over</a></p>`)
 		return
 	}
 
@@ -286,18 +341,17 @@ func handleRun(w http.ResponseWriter, r *http.Request) {
 		mgmtStatus = mgmtResp.StatusCode
 	}
 	cards = append(cards, card{
-		Title: "8. Call PingOne Management API",
+		Title: fmt.Sprintf("%s. Call PingOne Management API", mgmtStep),
 		OK:    mgmtErr == nil && mgmtStatus < 400,
 		URL:   "GET " + mgmtURL,
 		Detail: template.HTML(fmt.Sprintf(
-			`Risk evaluation returned <code>%s</code> — proceeding with the downstream call. The access token is sent as a Bearer token. The server validates the token and returns data the client is authorized to read.<br>Header: <code>Authorization: Bearer &lt;access_token&gt;</code><br>HTTP %d<br><small>If you see a 401 or 403, verify the Worker app has an environment role (e.g. Identity Data Read Only) assigned in PingOne.</small>`,
-			template.HTMLEscapeString(riskLevel),
+			`Risk level <code>%s</code> — proceeding. The access token is sent as a Bearer token.<br>HTTP %d`,
+			template.HTMLEscapeString(level),
 			mgmtStatus,
 		)),
 		Body: prettyJSONOrRaw(mgmtRaw),
 	})
-
-	render(w, "Run — complete", renderCards(cards)+`<p style="margin-top:20px;"><a href="/">Start over</a></p>`)
+	return
 }
 
 // callerIP returns the IP address that initiated the HTTP request. It is used to populate
@@ -377,6 +431,7 @@ type card struct {
 	Detail    template.HTML
 	Body      string
 	Collapsed bool
+	Divider   bool // if true, renders as a section header, not a result card
 }
 
 func render(w http.ResponseWriter, title, bodyHTML string) {
@@ -552,31 +607,41 @@ const pageHTML = `
 <head>
 <title>{{.Title}}</title>
 <style>
-  body{font-family:sans-serif; margin:40px; max-width:980px;}
+  body{font-family:sans-serif; margin:0; background:#f5f5f5;}
   h2{margin-top:0;}
-  button{font-size:16px; padding:10px 20px; cursor:pointer;}
+  button{font-size:16px; padding:10px 20px; cursor:pointer; background:#E1003B; color:#fff; border:none; border-radius:4px;}
   pre{background:#f4f4f4; padding:12px; border-left:3px solid #888; white-space:pre-wrap; word-break:break-all; margin:0;}
   code{background:#f0f0f0; padding:1px 4px; border-radius:2px;}
-  .card{margin-top:18px; padding:14px 16px; border:1px solid #ddd; border-radius:4px;}
+  .card{margin-top:18px; padding:14px 16px; border:1px solid #ddd; border-radius:4px; background:#fff;}
   .card h3{margin:0 0 6px 0;}
   .ok{color:#0a7a0a;}
   .err{color:#b00020;}
-  .url{font-family:monospace; font-size:13px; color:#555; background:#eef; padding:4px 8px; border-radius:3px; display:block; margin:6px 0; word-break:break-all;}
+  .url{font-family:monospace; font-size:13px; color:#555; background:#f0f0f0; padding:4px 8px; border-radius:3px; display:block; margin:6px 0; word-break:break-all;}
   details{margin-top:6px;}
   summary{cursor:pointer; font-size:13px; color:#444; user-select:none; padding:2px 0;}
   details pre{margin-top:4px;}
+  .divider{margin-top:30px; margin-bottom:4px; padding:8px 14px; background:#B8002F; color:#fff; border-radius:4px; font-weight:600; font-size:15px;}
 </style>
 </head>
 <body>
+<header style="background:#B8002F;padding:12px 24px;display:flex;align-items:center;margin-bottom:0;">
+  <img src="/logo.png" style="height:35px;width:auto;" alt="Ping Identity">
+</header>
+<div style="padding:32px 40px;max-width:980px;margin:0 auto;">
 {{.Body}}
+</div>
 </body>
 </html>`
 
 const cardsHTML = `{{range .}}
+{{if .Divider}}
+<div class="divider">{{.Title}}</div>
+{{else}}
 <div class="card">
   <h3 class="{{if .OK}}ok{{else}}err{{end}}">{{.Title}} {{if .OK}}(ok){{else}}(failed){{end}}</h3>
   {{if .URL}}<div class="url">{{.URL}}</div>{{end}}
   {{if .Detail}}<div>{{.Detail}}</div>{{end}}
   {{if .Body}}{{if .Collapsed}}<details><summary>Show response</summary><pre>{{.Body}}</pre></details>{{else}}<details open><summary>Hide</summary><pre>{{.Body}}</pre></details>{{end}}{{end}}
 </div>
+{{end}}
 {{end}}`
