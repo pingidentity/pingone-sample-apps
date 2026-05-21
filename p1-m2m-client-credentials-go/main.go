@@ -292,9 +292,9 @@ func runRiskAndGate(accessToken, riskURL, mgmtURL string, riskBody map[string]in
 			`<strong>This evaluation is intentionally constructed to trigger a HIGH risk score.</strong><br><br>`+
 				`The IP <code>%s</code> is a known Tor exit node. Tor is an anonymizing network commonly associated with `+
 				`attempts to obscure origin and bypass geo-controls. PingOne Protect's <strong>Anonymous Network Detection</strong> `+
-				`predictor recognises this IP and scores it at <strong>80</strong> — above the policy set's HIGH threshold of 75 — `+
+				`predictor recognizes this IP and scores it at <strong>80</strong> — above the policy set's HIGH threshold of 75 — `+
 				`causing the overall evaluation to return HIGH.<br><br>`+
-				`user.type is set to <code>ANONYMOUS</code> and a bot-like user agent is supplied to further reflect `+
+				`<code>user.type</code> is set to <code>ANONYMOUS</code> and a bot-like user agent is supplied to further reflect `+
 				`what a real suspicious M2M caller might look like. In production you would populate these fields from `+
 				`the actual upstream caller rather than hardcoding them.<br><br>`+
 				`SDK signals are omitted — there is no browser SDK in an M2M flow.<br>`+
