@@ -1,3 +1,22 @@
+/**
+ * App.jsx — React UI shell for the OIDC PKCE walkthrough.
+ *
+ * All OAuth/OIDC logic lives in server/index.js. This component manages the
+ * UI lifecycle and calls the backend API endpoints:
+ *
+ *   POST /api/prepare        — generate PKCE artifacts; returns cards + authorizeURL
+ *   GET  /api/callback-result — fetch step cards after the PingOne redirect back
+ *   POST /api/refresh        — use stored refresh_token for a new access_token
+ *
+ * STAGE MACHINE:
+ *   start → preparing → prepared → (browser redirect to PingOne) →
+ *   loading-callback → callback-done → [optionally] refreshing → refresh-done
+ *
+ * The PingOne redirect is a full browser navigation (window.location.href), so
+ * React state is lost. On mount, the component checks for callbackDone=1 or
+ * callbackError=1 in the URL to detect a returning callback.
+ */
+
 import React, { useState, useEffect } from 'react';
 import logoSrc from './logo.png';
 
@@ -20,6 +39,11 @@ const styles = {
   },
 };
 
+/**
+ * StepCard renders a single step card returned by the server.
+ * card.detail is server-generated HTML and rendered with dangerouslySetInnerHTML
+ * — it is not user input and is safe.
+ */
 function StepCard({ card }) {
   return (
     <div style={{ marginTop: 18, padding: '14px 16px', border: '1px solid #ddd', borderRadius: 4 }}>
@@ -50,6 +74,7 @@ function CardList({ cards }) {
   return <div>{cards.map((c, i) => <StepCard key={i} card={c} />)}</div>;
 }
 
+/** Shared page shell with Ping Identity header. */
 function PageShell({ children }) {
   return (
     <div>
@@ -72,7 +97,12 @@ export default function App() {
   const [hasRefreshToken, setHasRefreshToken] = useState(false);
   const [error, setError] = useState('');
 
-  // On mount: check for callbackDone=1 in the URL
+  /**
+   * On mount: detect a returning OAuth callback by inspecting URL parameters.
+   * callbackDone=1  — the server processed the callback; fetch the results.
+   * callbackError=1 — the server detected an error (state mismatch or PingOne error).
+   * error=nosession — the callback arrived but the session cookie was missing.
+   */
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get('callbackDone') === '1') {
@@ -101,6 +131,11 @@ export default function App() {
     }
   }, []);
 
+  /**
+   * Call POST /api/prepare to generate PKCE artifacts on the server, then
+   * display the prepare cards so the developer can inspect each value before
+   * navigating to PingOne.
+   */
   async function handleBeginLogin() {
     setStage('preparing');
     setError('');
@@ -120,6 +155,10 @@ export default function App() {
     }
   }
 
+  /**
+   * Use the stored refresh_token to get a new access_token without
+   * requiring the user to re-authenticate.
+   */
   async function handleRefresh() {
     setStage('refreshing');
     setError('');
@@ -188,6 +227,7 @@ export default function App() {
         <h2>Step 1 — PKCE artifacts prepared</h2>
         <CardList cards={prepareCards} />
         <p style={{ marginTop: 24 }}>
+          {/* Navigate to PingOne — this is a full browser redirect, React state is lost */}
           <a href={authorizeURL}>
             <button style={{ fontSize: 16, padding: '10px 20px', cursor: 'pointer', background: '#E1003B', color: '#fff', border: 'none', borderRadius: 4 }}>
               Continue to PingOne →

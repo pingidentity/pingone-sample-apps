@@ -1,3 +1,47 @@
+// Package main implements a PingOne native Flows MFA demo.
+//
+// Overview of the four-step flow:
+//
+//  1. GET /as/authorize?response_mode=pi.flow
+//     Initialises a PingOne Flow session. Because response_mode=pi.flow is
+//     used, PingOne returns a JSON body containing a flow ID rather than
+//     redirecting the browser. The flow ID is the correlation handle for all
+//     subsequent /flows/{id} calls. PingOne also sets session cookies (ST,
+//     ST-NO-SS) in the response — these must be captured and replayed on
+//     every later call or PingOne will reject the request.
+//
+//  2. POST /flows/{flowID}  with Content-Type: application/vnd.pingidentity.usernamePassword.check+json
+//     Submits the user's username and password to the active flow. The
+//     response status field drives the next step:
+//       "COMPLETED"                            — no MFA required, proceed to resume
+//       "OTP_REQUIRED" / "DEVICE_SELECTION_REQUIRED" /
+//       "MULTI_FACTOR_AUTHENTICATION_REQUIRED" — an OTP has been sent; prompt the user
+//
+//  3. POST /flows/{flowID}  with Content-Type: application/vnd.pingidentity.otp.check+json
+//     (only when MFA is required) Submits the one-time passcode. On success
+//     the response status becomes "COMPLETED".
+//
+//  4. GET /as/resume?flowId={flowID}
+//     Signals PingOne that the native flow is complete. PingOne either
+//     returns a JSON body with authorizeResponse.code or issues a 302
+//     redirect to the registered redirect_uri with ?code= in the query
+//     string. Both paths are handled here. The code is then exchanged at
+//     POST /as/token for an access token (standard authorization_code grant).
+//
+// Why two PingOne apps?
+//
+//   The /flows/{id} API is a management-plane API that requires an admin
+//   bearer token — session cookies alone are insufficient. A "worker app"
+//   (client_credentials grant) in your PingOne admin environment provides
+//   that token. A separate end-user OIDC app drives the actual flow and
+//   issues the final tokens to the user.
+//
+// Prerequisites in PingOne:
+//   - An end-user OIDC web app with authorization_code grant, CLIENT_SECRET_BASIC,
+//     and an MFA policy that requires email OTP for the target user population.
+//   - An admin worker app (client_credentials) with Identity Data Admin or
+//     equivalent role, used solely to obtain the management API bearer token.
+//   - A test user enrolled with an email MFA device.
 package main
 
 import (
@@ -20,24 +64,53 @@ import (
 var logoPNG []byte
 
 var (
+	// envID / clientID / clientSecret are the end-user OIDC app credentials.
+	// They drive the flow and are used only to exchange the final auth code
+	// for tokens at POST /as/token.
 	envID        string
 	clientID     string
 	clientSecret string
 	authPath     string
 
+	// adminEnvID / adminClientID / adminClientSecret are the worker app
+	// credentials used to obtain a management-plane bearer token. PingOne
+	// requires a bearer token on every /flows/{id} call in addition to the
+	// session cookies — without it the API returns 401 even when cookies are
+	// present.
 	adminEnvID        string
 	adminClientID     string
 	adminClientSecret string
 
+	// sessionStore maps a flowID to the in-progress flow session so that the
+	// admin bearer token and captured cookies can be retrieved when the user
+	// posts their OTP on a second HTTP request. A production app would use
+	// Redis or a database; here a plain map is sufficient for a single-process
+	// demo.
 	sessionStore = make(map[string]*flowSession)
 )
 
-// flowSession tracks the admin bearer token and any cookies across the flow.
+// flowSession holds the server-side state for one in-progress PingOne flow.
+//
+// adminToken — the management-plane bearer token from the worker app. It
+// must be sent as "Authorization: Bearer <token>" on every POST to
+// /flows/{id}. Tokens are short-lived (typically 1 hour); for simplicity
+// this demo fetches a fresh token at the start of each login attempt.
+//
+// cookies — the raw Set-Cookie values captured from PingOne responses
+// (primarily ST and ST-NO-SS). PingOne binds the flow execution context to
+// these cookies, so they must be replayed verbatim on every subsequent
+// request. Using a standard http.CookieJar is unreliable here because RFC
+// 6265 path scoping silently drops cookies whose Path attribute does not
+// match the request path. Manual capture-and-replay is the safe approach.
 type flowSession struct {
 	adminToken string
 	cookies    []*http.Cookie
 }
 
+// capture merges Set-Cookie values from a PingOne response into the session.
+// If a cookie with the same name is already present it is replaced (PingOne
+// may issue updated ST values across flow steps), otherwise the cookie is
+// appended.
 func (s *flowSession) capture(resp *http.Response) {
 	for _, cookie := range resp.Cookies() {
 		updated := false
@@ -54,9 +127,13 @@ func (s *flowSession) capture(resp *http.Response) {
 	}
 }
 
-// applyFlow sets the admin Bearer token and session cookies on a /flows/ API request.
-// PingOne binds flow state to session cookies (ST, ST-NO-SS) set by earlier responses,
-// and the bearer token authorizes the API call itself.
+// applyFlow sets the admin Bearer token and all captured session cookies on
+// a request destined for the /flows/ API. Both are required on every call:
+//   - Authorization: Bearer <adminToken> — authorises the management-plane call
+//   - Cookie: ST=...; ST-NO-SS=... — ties the request to the active flow session
+//
+// Omitting either header results in a 401 from PingOne even if the other is
+// present.
 func (s *flowSession) applyFlow(req *http.Request) {
 	if s.adminToken != "" {
 		req.Header.Set("Authorization", "Bearer "+s.adminToken)
@@ -66,6 +143,12 @@ func (s *flowSession) applyFlow(req *http.Request) {
 	}
 }
 
+// noRedirectClient returns an HTTP client that does not follow redirects.
+// PingOne's /as/resume endpoint returns either a JSON body or a 302 redirect
+// depending on the flow configuration. The standard Go HTTP client would
+// silently follow the redirect and lose the Location header. By returning
+// http.ErrUseLastResponse we get the 302 response back intact and can
+// extract the authorization code from the Location URL ourselves.
 func noRedirectClient() *http.Client {
 	return &http.Client{
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -74,7 +157,14 @@ func noRedirectClient() *http.Client {
 	}
 }
 
-// getAdminToken fetches a client_credentials access token using the admin worker app.
+// getAdminToken fetches a short-lived access token from the admin worker
+// app using the OAuth 2.0 client_credentials grant.
+//
+// The admin worker app lives in a separate PingOne environment (the
+// "admin environment") from the end-user app. This is a common pattern when
+// the admin environment is shared across many target environments and the
+// worker app is granted a cross-environment role assignment. The token
+// returned here is used on all /flows/{id} management API calls.
 func getAdminToken() (string, error) {
 	data := url.Values{}
 	data.Set("grant_type", "client_credentials")
@@ -87,6 +177,9 @@ func getAdminToken() (string, error) {
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	// CLIENT_SECRET_BASIC: client_id and client_secret base64-encoded in the
+	// Authorization header. This is the most widely supported authentication
+	// method for machine-to-machine token requests.
 	req.SetBasicAuth(adminClientID, adminClientSecret)
 
 	resp, err := http.DefaultClient.Do(req)
@@ -126,7 +219,10 @@ func main() {
 		log.Fatal("Missing admin worker app credentials (PINGONE_ADMIN_ENV_ID, PINGONE_ADMIN_CLIENT_ID, PINGONE_ADMIN_CLIENT_SECRET).")
 	}
 
-	// Smoke-test the admin credentials at startup.
+	// Verify the admin credentials are valid before accepting traffic. If the
+	// worker app's client_id / secret are wrong, every subsequent flow call
+	// will fail with a 401, which surfaces as a confusing mid-login error.
+	// Failing fast at startup gives a clear error message immediately.
 	if _, err := getAdminToken(); err != nil {
 		log.Fatalf("Failed to get admin token at startup: %v", err)
 	}
@@ -227,6 +323,14 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, indexHTML)
 }
 
+// handleLogin drives steps 1 and 2 of the flow: initialise the PingOne Flow
+// session and submit the user's credentials. Depending on the flow status
+// returned by PingOne it either:
+//   - Renders the MFA page (OTP_REQUIRED, DEVICE_SELECTION_REQUIRED, or
+//     MULTI_FACTOR_AUTHENTICATION_REQUIRED) and stores the session keyed by
+//     flowID so it can be retrieved when the OTP arrives.
+//   - Calls completeLoginAndRender directly if the flow status is already
+//     COMPLETED (no MFA policy applies to this user).
 func handleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
@@ -237,6 +341,8 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 	username := strings.TrimSpace(r.FormValue("username"))
 	password := r.FormValue("password")
 
+	// Fetch a fresh admin token for this login attempt. The token is kept in
+	// the flowSession so it can be reused for the OTP check in handleMFAVerify.
 	adminToken, err := getAdminToken()
 	if err != nil {
 		renderError(w, "Failed to get admin token: "+err.Error())
@@ -246,7 +352,15 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 	client := noRedirectClient()
 	session := &flowSession{adminToken: adminToken}
 
-	// 1. Initialize flow — response_mode=pi.flow returns JSON directly, no auth needed.
+	// Step 1: Initialise the PingOne Flow session.
+	//
+	// response_mode=pi.flow instructs PingOne to return the initial flow state
+	// as JSON instead of issuing a browser redirect. The response body contains
+	// an "id" field — the flow ID used on all subsequent /flows/{id} calls.
+	//
+	// Accept: */* is required because PingOne may return a vendor content type
+	// (application/vnd.pingidentity.*+json). Sending Accept: application/json
+	// alone causes a 406 Not Acceptable on some flow configurations.
 	authURL := fmt.Sprintf(
 		"%s/%s/as/authorize?response_type=code&client_id=%s&redirect_uri=http://localhost:3000/callback&scope=openid%%20profile&response_mode=pi.flow",
 		authPath, envID, clientID,
@@ -260,6 +374,8 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer resp.Body.Close()
+	// Capture any cookies PingOne sets on the authorize response. These are
+	// typically ST and ST-NO-SS and must accompany every later /flows/ call.
 	session.capture(resp)
 
 	var flowData map[string]interface{}
@@ -267,8 +383,14 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 	flowID, _ := flowData["id"].(string)
 	log.Printf("[login] authorize flowID: %s", flowID)
 
-	// 2. Submit credentials — requires admin Bearer token (matches Postman collection auth).
-	// Accept: */* because PingOne returns a vendor content type (application/vnd.pingidentity.*+json).
+	// Step 2: Submit the username and password to the active flow.
+	//
+	// The Content-Type is a PingOne vendor type that tells the flow engine
+	// which action to perform. Using application/json here would result in a
+	// 415 Unsupported Media Type.
+	//
+	// Both the admin Bearer token and the session cookies from step 1 must be
+	// present — see applyFlow for details.
 	payloadBytes, _ := json.Marshal(map[string]string{"username": username, "password": password})
 	reqLogin, _ := http.NewRequest("POST", fmt.Sprintf("%s/%s/flows/%s", authPath, envID, flowID), bytes.NewBuffer(payloadBytes))
 	reqLogin.Header.Set("Content-Type", "application/vnd.pingidentity.usernamePassword.check+json")
@@ -287,13 +409,25 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 	json.NewDecoder(loginResp.Body).Decode(&loginResult)
 	log.Printf("[login] credentials result status=%v id=%v", loginResult["status"], loginResult["id"])
 
+	// PingOne may return an updated flow ID after the credential check (for
+	// example when the flow transitions to a new state). Always use the latest
+	// ID so subsequent calls target the correct flow state.
 	if newID, ok := loginResult["id"].(string); ok && newID != "" {
 		flowID = newID
 	}
 	status, _ := loginResult["status"].(string)
 
+	// Persist the session under the current flowID so handleMFAVerify can
+	// retrieve the admin token and cookies when the OTP arrives.
 	sessionStore[flowID] = session
 
+	// Route based on the flow status returned by PingOne:
+	//   COMPLETED — credentials were accepted and no MFA is required for this
+	//               user (or no MFA policy is assigned). Proceed directly to
+	//               the resume/token exchange step.
+	//   OTP_REQUIRED / DEVICE_SELECTION_REQUIRED /
+	//   MULTI_FACTOR_AUTHENTICATION_REQUIRED — PingOne has sent an OTP to the
+	//               user's registered device. Show the MFA form and wait.
 	if status == "COMPLETED" {
 		completeLoginAndRender(w, flowID, session, client)
 		return
@@ -307,6 +441,12 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 	renderError(w, fmt.Sprintf("Unexpected login status: %v", loginResult))
 }
 
+// handleMFAVerify drives step 3 of the flow: submit the OTP to PingOne and,
+// on success, advance to the resume/token exchange step.
+//
+// The flowID posted by the MFA form is used to look up the in-progress
+// flowSession, which carries the admin bearer token and cookies needed to
+// authenticate the /flows/{id} call.
 func handleMFAVerify(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
@@ -325,8 +465,12 @@ func handleMFAVerify(w http.ResponseWriter, r *http.Request) {
 
 	client := noRedirectClient()
 
-	// OTP check — requires admin Bearer token (matches Postman collection auth).
-	// Accept: */* because PingOne returns a vendor content type (application/vnd.pingidentity.*+json).
+	// Step 3: Submit the OTP to the active flow.
+	//
+	// The vendor Content-Type application/vnd.pingidentity.otp.check+json
+	// tells the flow engine to validate the OTP against the user's enrolled
+	// MFA device. The same Accept: */* and dual-auth (Bearer + cookies) rules
+	// that applied to the credential check apply here as well.
 	payloadBytes, _ := json.Marshal(map[string]string{"otp": otp})
 	req, _ := http.NewRequest("POST", fmt.Sprintf("%s/%s/flows/%s", authPath, envID, flowID), bytes.NewBuffer(payloadBytes))
 	req.Header.Set("Content-Type", "application/vnd.pingidentity.otp.check+json")
@@ -347,6 +491,8 @@ func handleMFAVerify(w http.ResponseWriter, r *http.Request) {
 	json.NewDecoder(mfaResp.Body).Decode(&mfaResult)
 	log.Printf("[mfa] result: %v", mfaResult)
 
+	// PingOne may issue a new flow ID after the OTP check. Update the session
+	// store so any future requests (e.g. a retry) use the latest ID.
 	if newID, ok := mfaResult["id"].(string); ok && newID != "" && newID != flowID {
 		sessionStore[newID] = session
 		delete(sessionStore, flowID)
@@ -354,6 +500,8 @@ func handleMFAVerify(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if status, _ := mfaResult["status"].(string); status == "COMPLETED" {
+		// OTP validated — clean up the session entry and proceed to exchange
+		// the completed flow for an authorization code and then tokens.
 		delete(sessionStore, flowID)
 		completeLoginAndRender(w, flowID, session, client)
 		return
@@ -364,9 +512,29 @@ func handleMFAVerify(w http.ResponseWriter, r *http.Request) {
 
 // --- Helper Functions ---
 
+// completeLoginAndRender drives step 4: call GET /as/resume?flowId={id} to
+// signal PingOne that the native flow is complete, extract the resulting
+// authorization code, and exchange it for tokens.
+//
+// The /as/resume endpoint behaves differently depending on the OIDC app
+// configuration:
+//   - If the app's redirect_uri handling is server-side, PingOne may return
+//     a JSON body containing authorizeResponse.code.
+//   - More commonly, PingOne issues a 302 redirect to the registered
+//     redirect_uri with ?code=<value> appended. The no-redirect HTTP client
+//     is used so the Location header is returned to this code rather than
+//     followed automatically.
+//
+// Only the session cookies are required on the resume call — no admin bearer
+// token is needed because /as/resume is part of the OAuth 2.0 authorization
+// endpoint, not the management API.
 func completeLoginAndRender(w http.ResponseWriter, flowID string, session *flowSession, client *http.Client) {
 	reqResume, _ := http.NewRequest("GET", fmt.Sprintf("%s/%s/as/resume?flowId=%s", authPath, envID, flowID), nil)
 	reqResume.Header.Set("Accept", "*/*")
+	// The ST / ST-NO-SS cookies established during the flow must accompany
+	// the resume call so PingOne can locate and complete the session. The
+	// admin bearer token is NOT sent here — /as/resume is an authorization
+	// endpoint, not the management plane.
 	for _, cookie := range session.cookies {
 		reqResume.AddCookie(cookie)
 	}
@@ -385,6 +553,8 @@ func completeLoginAndRender(w http.ResponseWriter, flowID string, session *flowS
 	json.NewDecoder(resumeResp.Body).Decode(&resumeResult)
 	log.Printf("[resume] result: %v", resumeResult)
 
+	// Extract the authorization code. Try the JSON body first; fall back to
+	// the Location header's query string if PingOne issued a redirect instead.
 	authCode := ""
 	if authResp, ok := resumeResult["authorizeResponse"].(map[string]interface{}); ok {
 		authCode, _ = authResp["code"].(string)
@@ -402,6 +572,13 @@ func completeLoginAndRender(w http.ResponseWriter, flowID string, session *flowS
 		return
 	}
 
+	// Step 4b: Exchange the authorization code for tokens at the standard
+	// PingOne token endpoint (authorization_code grant). This call uses the
+	// end-user OIDC app's client_id and client_secret via HTTP Basic auth.
+	//
+	// The redirect_uri must exactly match what was sent in the authorize
+	// request and what is registered on the app — PingOne validates all three
+	// must agree before issuing tokens.
 	data := url.Values{}
 	data.Set("grant_type", "authorization_code")
 	data.Set("code", authCode)

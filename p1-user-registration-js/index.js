@@ -1,14 +1,68 @@
+/**
+ * PingOne User Registration — Node.js / Express implementation
+ *
+ * This app demonstrates self-service user registration against the PingOne
+ * native authentication API, followed by a standard OIDC sign-on flow for the
+ * newly created user.
+ *
+ * How registration differs from sign-on
+ * --------------------------------------
+ * A typical sign-on flow authenticates a user who already exists in PingOne's
+ * directory and ends with an OAuth 2.0 authorization code that can be exchanged
+ * for tokens. Registration is a pre-authentication step: it creates the user
+ * account first. No admin worker app token is required here — the same OIDC
+ * application that drives sign-on can also accept registrations through the
+ * native flow API, so a single set of credentials (PINGONE_CLIENT_ID /
+ * PINGONE_CLIENT_SECRET) covers the entire workflow.
+ *
+ * Registration sub-flow (2–3 steps):
+ *  1. GET  /as/authorize?response_mode=pi.flow
+ *     Initialises a PingOne authentication session. response_mode=pi.flow
+ *     makes PingOne return a JSON body containing a flow ID instead of
+ *     redirecting the browser. The response also sets session cookies that
+ *     must be replayed on every subsequent call to this flow.
+ *  2. POST /flows/{flowID}  Content-Type: application/vnd.pingidentity.user.register+json
+ *     Creates the new user. PingOne either completes immediately
+ *     (status=COMPLETED) or — if the environment has email verification
+ *     enabled — returns status=VERIFICATION_CODE_REQUIRED and emails a 6-digit
+ *     OTP to the address supplied in the request body.
+ *  3. POST /flows/{flowID}  Content-Type: application/vnd.pingidentity.user.verify+json
+ *     (Only when step 2 required verification.) Submits the OTP. A
+ *     status=COMPLETED response means the account is active.
+ *
+ * Sign-on sub-flow (4 steps):
+ *  1. GET  /as/authorize?response_mode=pi.flow  (fresh session, no relation to registration)
+ *  2. POST /flows/{flowID}  Content-Type: application/vnd.pingidentity.usernamePassword.check+json
+ *     Validates credentials.  status=COMPLETED means authentication passed.
+ *  3. GET  /as/resume?flowId={flowID}
+ *     Bridges the native flow back to the OAuth 2.0 layer. PingOne either
+ *     issues a 302 redirect with ?code=... or returns JSON with
+ *     authorizeResponse.code. Both cases are handled.
+ *  4. POST /as/token  — standard authorization_code token exchange.
+ *
+ * Cookie handling
+ * ---------------
+ * PingOne sets session cookies (ST, ST-NO-SS) on the initial /as/authorize
+ * response. All subsequent requests to the same flow must replay those cookies
+ * verbatim. The Node.js fetch API does not manage cookies automatically, so
+ * this file captures them from Set-Cookie headers and sends them manually via
+ * the Cookie header on every flow request.
+ */
+
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const express = require('express');
 
+// Embed the logo as a base64 data URI so the single-file server doesn't need
+// to serve a separate static asset route.
 const logoPNG = fs.readFileSync(path.join(__dirname, '..', 'assets', 'logo.png')).toString('base64');
 const logoSrc = `data:image/png;base64,${logoPNG}`;
 
 const envID = process.env.PINGONE_ENV_ID;
 const clientID = process.env.PINGONE_CLIENT_ID;
 const clientSecret = process.env.PINGONE_CLIENT_SECRET;
+// Trailing slash stripped to avoid double-slash in URL construction below.
 const authPath = (process.env.PINGONE_AUTH_PATH || '').replace(/\/$/, '');
 
 if (!envID || !clientID || !clientSecret || !authPath) {
@@ -16,22 +70,51 @@ if (!envID || !clientID || !clientSecret || !authPath) {
   process.exit(1);
 }
 
-// Per-flow cookie store keyed by flowID.
-// Holds raw "name=value" cookie strings captured from PingOne responses so we can replay them
-// verbatim across requests, bypassing strict RFC 6265 path scoping.
+/**
+ * Per-flow cookie store keyed by PingOne flow ID.
+ *
+ * When a registration begins, /as/authorize sets session cookies that PingOne
+ * uses to correlate all subsequent requests to the same flow. If the user must
+ * verify their email, the OTP arrives on a separate HTTP request — potentially
+ * seconds later. The store preserves the cookies between the /register and
+ * /verify handlers. Entries are deleted once the flow reaches COMPLETED.
+ */
 const flowStore = new Map();
 
+/**
+ * captureCookies extracts the name=value pair from each Set-Cookie header in
+ * resp and upserts it into the store array. Upsert (replace if the name already
+ * exists) is important because PingOne refreshes its session cookie values on
+ * every response — replaying a stale value causes a 401 on the next request.
+ *
+ * @param {string[]} store  - mutable cookie array, modified in place
+ * @param {Response} resp   - fetch Response whose Set-Cookie headers to capture
+ */
 function captureCookies(store, resp) {
+  // resp.headers.getSetCookie() returns all Set-Cookie headers as an array,
+  // available in Node 18+. Each entry has the full directive string, e.g.
+  // "ST=abc123; Path=/; HttpOnly". We only need the name=value portion.
   const setCookie = resp.headers.getSetCookie ? resp.headers.getSetCookie() : [];
   for (const raw of setCookie) {
-    const nv = raw.split(';')[0];
+    const nv = raw.split(';')[0];          // strip directives (Path, HttpOnly …)
     const name = nv.split('=')[0];
     const idx = store.findIndex(c => c.startsWith(`${name}=`));
-    if (idx >= 0) store[idx] = nv;
-    else store.push(nv);
+    if (idx >= 0) store[idx] = nv;         // update existing entry
+    else store.push(nv);                    // add new entry
   }
 }
 
+/**
+ * cookieHeader joins the raw "name=value" strings in store into a single
+ * Cookie header value suitable for sending on the next PingOne request.
+ *
+ * Assembling the header manually (rather than using a cookie jar) bypasses
+ * RFC 6265 path-scoping rules that would silently drop cookies whose recorded
+ * path doesn't match the current request path.
+ *
+ * @param {string[]} store
+ * @returns {string}
+ */
 const cookieHeader = (store) => store.join('; ');
 
 // --- HTML Templates ---
@@ -82,6 +165,8 @@ const loginHTML = `
 </body>
 </html>`;
 
+// verifyHTML is a function so the hidden flowId field can be interpolated at
+// request time — the ID is not known until /as/authorize responds.
 const verifyHTML = (flowID) => `
 <!DOCTYPE html>
 <html>
@@ -155,11 +240,28 @@ const errorHTML = (msg) => `
 // --- Express app ---
 
 const app = express();
+// express.urlencoded is required to parse HTML form bodies (application/x-www-form-urlencoded)
+// submitted by the registration and login forms.
 app.use(express.urlencoded({ extended: true }));
 
 app.get('/', (_req, res) => res.send(indexHTML));
 app.get('/login-page', (_req, res) => res.send(loginHTML));
 
+/**
+ * POST /register — drives the PingOne registration sub-flow.
+ *
+ * Step 1: Initialise the flow via GET /as/authorize?response_mode=pi.flow.
+ *   - redirect: 'manual' prevents fetch from following the 302 that PingOne
+ *     would issue if the client didn't set response_mode=pi.flow. With the flag
+ *     set, PingOne returns a JSON body with a flow ID instead.
+ *   - Accept: '*\/*' is required; the flow API returns a vendor content type
+ *     that would be rejected if Accept were set to application/json only.
+ *
+ * Step 2: Submit the new user's details to /flows/{flowID} with the register
+ *   content type. The response status field indicates what happens next:
+ *   - VERIFICATION_CODE_REQUIRED: email OTP was sent; render the OTP form.
+ *   - COMPLETED: no verification configured; account is live immediately.
+ */
 app.post('/register', async (req, res) => {
   try {
     const username = (req.body.username || '').trim();
@@ -168,7 +270,7 @@ app.post('/register', async (req, res) => {
 
     const cookies = [];
 
-    // 1. Initialize flow
+    // Step 1: Initialise the PingOne authentication flow.
     const authURL = `${authPath}/${envID}/as/authorize?response_type=code&client_id=${clientID}&redirect_uri=http://localhost:3000/callback&scope=openid%20profile&response_mode=pi.flow`;
     const initResp = await fetch(authURL, { headers: { Accept: '*/*' }, redirect: 'manual' });
     captureCookies(cookies, initResp);
@@ -176,7 +278,11 @@ app.post('/register', async (req, res) => {
     const flowID = initJson.id;
     if (!flowID) return res.send(errorHTML(`Failed to retrieve flowId. Response: ${JSON.stringify(initJson)}`));
 
-    // 2. Submit registration
+    // Step 2: Register the new user.
+    // The Content-Type header selects the registration operation on the flow.
+    // The body must include at minimum username, email, and password. PingOne
+    // validates the password against the environment's password policy before
+    // creating the account.
     const regResp = await fetch(`${authPath}/${envID}/flows/${flowID}`, {
       method: 'POST',
       headers: {
@@ -189,12 +295,17 @@ app.post('/register', async (req, res) => {
     });
     captureCookies(cookies, regResp);
     const regJson = await regResp.json();
+
+    // Save the in-progress flow cookies so the /verify handler can resume the
+    // same PingOne session when the user submits their OTP.
     flowStore.set(flowID, cookies);
 
     if (regJson.status === 'VERIFICATION_CODE_REQUIRED') {
+      // Email verification is enabled; the OTP has been sent. Render the form.
       return res.send(verifyHTML(flowID));
     }
     if (regJson.status === 'COMPLETED') {
+      // No verification required — account is live.
       flowStore.delete(flowID);
       return res.send(successHTML);
     }
@@ -204,13 +315,24 @@ app.post('/register', async (req, res) => {
   }
 });
 
+/**
+ * POST /verify — submits the email OTP to complete the registration flow.
+ *
+ * The flowId hidden field in the OTP form was embedded by the /register handler.
+ * It is used to look up the saved PingOne session cookies so this request is
+ * associated with the same active flow. Without those cookies PingOne cannot
+ * recognise this request as belonging to the pending registration.
+ */
 app.post('/verify', async (req, res) => {
   try {
     const flowID = (req.body.flowId || '').trim();
     const code = (req.body.code || '').trim();
 
+    // Retrieve the cookies stored during the registration step.
     const cookies = flowStore.get(flowID) || [];
 
+    // Content-Type application/vnd.pingidentity.user.verify+json tells PingOne
+    // this POST carries an OTP, not another registration attempt.
     const verifyResp = await fetch(`${authPath}/${envID}/flows/${flowID}`, {
       method: 'POST',
       headers: {
@@ -234,13 +356,34 @@ app.post('/verify', async (req, res) => {
   }
 });
 
+/**
+ * POST /login — drives the PingOne sign-on sub-flow for an existing user.
+ *
+ * Step 1: Initialise a fresh authentication flow (same /as/authorize call as
+ *   registration, but for a new session with no prior state).
+ *
+ * Step 2: Validate credentials via POST /flows/{flowID} with the
+ *   usernamePassword.check content type. status=COMPLETED means PingOne
+ *   accepted the credentials and considers the user authenticated.
+ *
+ * Step 3: Resume the OAuth 2.0 session via GET /as/resume?flowId=...
+ *   PingOne returns the authorization code in one of two ways:
+ *   - As a 302 Location header:  ?code=<value>  (standard OIDC redirect)
+ *   - As a JSON body:  { authorizeResponse: { code: "<value>" } }
+ *   Both cases are checked so the app works in any PingOne configuration.
+ *
+ * Step 4: Exchange the code for tokens at POST /as/token using HTTP Basic
+ *   auth (clientID:clientSecret base64-encoded in the Authorization header).
+ *   The redirect_uri must exactly match both the authorize call and the value
+ *   registered on the PingOne application.
+ */
 app.post('/login', async (req, res) => {
   try {
     const username = (req.body.username || '').trim();
     const password = req.body.password || '';
     const cookies = [];
 
-    // 1. Initialize login flow
+    // Step 1: Initialise a fresh authentication session.
     const authURL = `${authPath}/${envID}/as/authorize?response_type=code&client_id=${clientID}&redirect_uri=http://localhost:3000/callback&scope=openid%20profile&response_mode=pi.flow`;
     const initResp = await fetch(authURL, { headers: { Accept: '*/*' }, redirect: 'manual' });
     captureCookies(cookies, initResp);
@@ -248,7 +391,7 @@ app.post('/login', async (req, res) => {
     const flowID = initJson.id;
     if (!flowID) return res.send(errorHTML(`Failed to retrieve flowId. Response: ${JSON.stringify(initJson)}`));
 
-    // 2. Submit credentials
+    // Step 2: Validate the user's credentials.
     const loginResp = await fetch(`${authPath}/${envID}/flows/${flowID}`, {
       method: 'POST',
       headers: {
@@ -266,7 +409,9 @@ app.post('/login', async (req, res) => {
       return res.send(errorHTML(`Login failed or requires MFA. Status: ${JSON.stringify(loginJson)}`));
     }
 
-    // 3. Resume to get authorization code
+    // Step 3: Resume to get the authorization code.
+    // redirect: 'manual' is critical here — the code is in the Location header
+    // of the 302 response and would be lost if fetch followed the redirect.
     const resumeResp = await fetch(`${authPath}/${envID}/as/resume?flowId=${flowID}`, {
       headers: { Accept: '*/*', Cookie: cookieHeader(cookies) },
       redirect: 'manual',
@@ -280,12 +425,14 @@ app.post('/login', async (req, res) => {
       authCode = j?.authorizeResponse?.code || '';
     }
     if (!authCode) {
+      // Fall back to the Location header (standard OIDC redirect case).
       const loc = resumeResp.headers.get('location');
       if (loc) try { authCode = new URL(loc).searchParams.get('code') || ''; } catch {}
     }
     if (!authCode) return res.send(errorHTML('Failed to get authorization code from resume.'));
 
-    // 4. Exchange code for token
+    // Step 4: Exchange the code for an access token.
+    // base64-encode clientID:clientSecret for HTTP Basic (CLIENT_SECRET_BASIC).
     const creds = Buffer.from(`${clientID}:${clientSecret}`).toString('base64');
     const tokenResp = await fetch(`${authPath}/${envID}/as/token`, {
       method: 'POST',

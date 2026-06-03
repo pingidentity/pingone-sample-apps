@@ -1,3 +1,66 @@
+// Package main demonstrates the PingOne custom admin role workflow.
+//
+// PingOne ships with a fixed set of platform (built-in) roles such as
+// "Organization Admin" and "Application Owner". These roles grant broad
+// access and cannot be modified. Custom admin roles let you create
+// narrower, purpose-built roles — for example, an application manager
+// that can read and update apps but is prevented from creating new ones.
+//
+// This workflow walks through the full lifecycle end-to-end:
+//
+//  1. Obtain an admin access token (client_credentials grant) using a
+//     worker app that holds the Organization Admin platform role. All
+//     management API calls require a bearer token; Organization Admin
+//     is specifically required because creating custom roles and assigning
+//     them to groups and users is a privileged operation.
+//
+//  2. List platform roles (GET /roles) to obtain the numeric IDs of the
+//     "Application Owner" and "Organization Admin" platform roles. These
+//     IDs are used as references in later steps — Application Owner shows
+//     which permission IDs are available, and Organization Admin is
+//     referenced in the canBeAssignedBy field of the new custom role.
+//
+//  3. Select a subset of Application Owner permissions. PingOne admin-role
+//     permission IDs use the format service:action:resource (for example,
+//     "applications:read:application"). We pick only read + update,
+//     intentionally omitting "applications:create:application" so that
+//     holders of the custom role cannot add new applications.
+//
+//  4. Create the custom admin role (POST /environments/{envID}/roles).
+//     Two fields here deserve special attention:
+//       - applicableTo: declares whether the role can be scoped to an
+//         ENVIRONMENT, a POPULATION, or both. Scoping to POPULATION lets
+//         an administrator restrict the role to a subset of users.
+//       - canBeAssignedBy: lists which platform roles are allowed to
+//         delegate this custom role. If this array is empty or omitted,
+//         even an Organization Admin cannot assign the custom role to
+//         anyone — the role exists but is permanently unassignable.
+//
+//  5. Create a population and a group. The population will be the scope
+//     boundary — users inside it can be managed by whoever holds the
+//     custom role. The group is the role-assignment vehicle: assigning a
+//     role to a group propagates the role to every member automatically.
+//
+//  6. Assign the custom role to the group, scoped to the population
+//     (POST /environments/{envID}/groups/{groupID}/roleAssignments).
+//     PingOne has no separate "assign group to population" API; the
+//     scope is expressed on the role assignment itself via scope.type=POPULATION.
+//
+//  7. Create a user in the population and add them to the group. The user
+//     inherits the custom role through group membership.
+//
+//  8. Verify: fetch the user's role assignments and confirm the custom
+//     role ID appears in the response. Role propagation via groups is
+//     usually immediate but may take a moment on heavily loaded tenants.
+//
+// Prerequisites:
+//   - A PingOne worker app (client_credentials) with the Organization Admin
+//     platform role assigned. The admin environment is typically the one
+//     that contains the worker app; the target environment is where the
+//     custom role and users are created (they can be the same environment).
+//   - PINGONE_ADMIN_ENV_ID, PINGONE_ADMIN_CLIENT_ID, PINGONE_ADMIN_CLIENT_SECRET,
+//     PINGONE_TARGET_ENV_ID, PINGONE_AUTH_PATH, and PINGONE_API_PATH must all
+//     be set (via .env or the system environment).
 package main
 
 import (
@@ -21,12 +84,25 @@ import (
 var logoPNG []byte
 
 var (
-	adminEnvID        string
+	// adminEnvID is the environment that contains the worker app used to obtain
+	// the admin bearer token. This is often the "Administrators" environment in
+	// your PingOne organisation.
+	adminEnvID string
+	// adminClientID / adminClientSecret are the credentials of the worker app
+	// that holds the Organization Admin role. The client_credentials grant is
+	// used because this is a server-to-server call with no interactive login.
 	adminClientID     string
 	adminClientSecret string
-	targetEnvID       string
-	authPath          string
-	apiPath           string
+	// targetEnvID is the environment where the custom role, population, group,
+	// and user are created. It may be the same as adminEnvID or a separate
+	// development/staging environment.
+	targetEnvID string
+	// authPath is the base URL for the PingOne authentication API, e.g.
+	// https://auth.pingone.com (North America) or https://auth.pingone.eu (Europe).
+	authPath string
+	// apiPath is the base URL for the PingOne management API, e.g.
+	// https://api.pingone.com/v1.
+	apiPath string
 )
 
 func main() {
@@ -131,15 +207,32 @@ const resultsHTML = `
 
 // --- HTTP handlers ---
 
+// stepResult represents the outcome of a single workflow step for display in
+// the results page.
+//
+//   - Title: human-readable step name shown as the card heading.
+//   - OK: true when the step succeeded; false renders the heading in red.
+//   - Detail: one-line summary (e.g. "HTTP 201 — id=abc123").
+//   - Body: pretty-printed JSON response body; rendered inside a <details>
+//     element so the user can expand/collapse it.
+//   - URL: the full "METHOD https://..." request URL shown as a monospace
+//     badge beneath the heading — useful for cross-referencing against
+//     the PingOne API docs or Postman.
+//   - Collapsed: when true, the response <details> starts closed; used for
+//     verbose responses (e.g. the full platform-roles list) that are only
+//     needed for debugging.
 type stepResult struct {
 	Title     string
 	OK        bool
 	Detail    string
 	Body      string
-	URL       string // request URL shown beneath the step title
-	Collapsed bool   // if true, the response <details> starts closed
+	URL       string
+	Collapsed bool
 }
 
+// pageData is the data model passed to the Go html/template when rendering the
+// results page. html/template auto-escapes all string values, so Body and Detail
+// are safe to render even if they contain angle brackets from JSON responses.
 type pageData struct {
 	Success bool
 	Steps   []stepResult
@@ -165,6 +258,17 @@ func handleRun(w http.ResponseWriter, r *http.Request) {
 
 // --- PingOne API helpers ---
 
+// getAdminToken obtains a short-lived bearer token from the PingOne token
+// endpoint using the OAuth 2.0 client_credentials grant.
+//
+// client_credentials is the correct grant type for server-to-server calls
+// where no end-user is involved — the worker app authenticates directly with
+// its client_id and client_secret. The resulting token inherits the platform
+// roles assigned to the worker app in PingOne (in this case Organization Admin).
+//
+// Authentication uses HTTP Basic: the client_id and client_secret are
+// base64-encoded as "client_id:client_secret" in the Authorization header.
+// This is the CLIENT_SECRET_BASIC token endpoint auth method in PingOne.
 func getAdminToken() (string, error) {
 	body := url.Values{}
 	body.Set("grant_type", "client_credentials")
@@ -186,8 +290,13 @@ func getAdminToken() (string, error) {
 	return token, nil
 }
 
-// apiCall issues a JSON request to the management API with the admin bearer token.
-// Returns the full request URL, raw body, decoded JSON (if parseable), and HTTP status.
+// apiCall issues a JSON request to the PingOne management API authenticated
+// with the admin bearer token.
+//
+// Returns (fullURL, httpStatus, rawBody, parsedJSON, error).
+// rawBody is always populated so the caller can display it verbatim;
+// parsedJSON is populated only when the response is valid JSON — callers
+// should never assume it is non-nil on a successful status code.
 func apiCall(method, path, token string, payload interface{}) (string, int, []byte, map[string]interface{}, error) {
 	fullURL := apiPath + path
 	var bodyReader io.Reader
@@ -212,7 +321,9 @@ func apiCall(method, path, token string, payload interface{}) (string, int, []by
 	return fullURL, resp.StatusCode, raw, parsed, nil
 }
 
-// pretty returns indented JSON for display.
+// pretty returns indented JSON for display in the results page.
+// If the bytes are not valid JSON (e.g. a plain-text error body from the API)
+// the raw string is returned unchanged so the developer still sees the response.
 func pretty(raw []byte) string {
 	var buf bytes.Buffer
 	if err := json.Indent(&buf, raw, "", "  "); err != nil {
@@ -223,10 +334,18 @@ func pretty(raw []byte) string {
 
 // --- Workflow ---
 
+// runWorkflow executes the full custom admin role lifecycle and returns a
+// pageData value containing one stepResult per API call. Each step is
+// self-contained: on failure the function returns immediately so the results
+// page clearly highlights exactly which step failed and why.
 func runWorkflow() pageData {
 	steps := []stepResult{}
 
-	// Step 0: admin token
+	// Step 0: obtain a bearer token from the PingOne token endpoint.
+	// We use the client_credentials grant because this is a server-to-server
+	// admin operation — no user is logging in. The worker app must hold the
+	// Organization Admin platform role; without it, subsequent calls to create
+	// custom roles or assign them will return 403 Forbidden.
 	token, err := getAdminToken()
 	if err != nil {
 		steps = append(steps, stepResult{Title: "Obtain admin access token", OK: false, Detail: err.Error()})
@@ -234,7 +353,14 @@ func runWorkflow() pageData {
 	}
 	steps = append(steps, stepResult{Title: "Obtain admin access token", OK: true, Detail: "client_credentials grant succeeded."})
 
-	// Step 1: look up Application Owner platform role to scope permissions from, and find its read/update application permissions.
+	// Step 1: GET /roles — list all platform (built-in) roles.
+	// Platform roles are global and read-only; they cannot be created or deleted
+	// through the API. We fetch them here to obtain the IDs of two specific roles:
+	//   - "Application Owner": so we can reference its permission IDs when
+	//     building the custom role's permission set.
+	//   - "Organization Admin": so we can add it to canBeAssignedBy, which
+	//     authorises Organisation Admin holders to delegate the custom role.
+	// The response is collapsed in the UI because the full role list is long.
 	reqURL, status, raw, parsed, err := apiCall("GET", "/roles", token, nil)
 	step1 := stepResult{Title: "List platform roles", Body: pretty(raw), URL: "GET " + reqURL, Collapsed: true}
 	if err != nil || status >= 400 {
@@ -251,7 +377,10 @@ func runWorkflow() pageData {
 
 	rolesURL := "GET " + reqURL
 
-	// Find Application Owner role id so we can borrow its permission set and trim it.
+	// Locate the Application Owner platform role by name.
+	// We use its ID only for display; the permission IDs we copy are well-known
+	// string constants (service:action:resource format) that do not require the
+	// role ID itself.
 	appOwnerID, appOwnerName := findRoleID(parsed, "Application Owner")
 	if appOwnerID == "" {
 		steps = append(steps, stepResult{Title: "Find Application Owner platform role", OK: false, Detail: "Could not find an 'Application Owner' role in this tenant.", URL: rolesURL})
@@ -259,8 +388,12 @@ func runWorkflow() pageData {
 	}
 	steps = append(steps, stepResult{Title: "Find Application Owner platform role", OK: true, Detail: fmt.Sprintf("Found %q (id=%s) — we'll borrow its application permissions and drop the create permission.", appOwnerName, appOwnerID), URL: rolesURL})
 
-	// Find Organization Admin role id — needed in canBeAssignedBy so the worker app
-	// (which holds Organization Admin) is authorized to delegate the custom role.
+	// Locate the Organization Admin platform role by name.
+	// Its ID is required in the canBeAssignedBy field of the custom role we are
+	// about to create. canBeAssignedBy controls which actors are permitted to
+	// delegate (assign) the custom role. If this array is left empty or omitted,
+	// no one — not even an Organization Admin — can ever assign the custom role
+	// to a user or group. The role would exist but be permanently unusable.
 	orgAdminID, _ := findRoleID(parsed, "Organization Admin")
 	if orgAdminID == "" {
 		steps = append(steps, stepResult{Title: "Find Organization Admin platform role", OK: false, Detail: "Could not find an 'Organization Admin' role — cannot grant delegation authority.", URL: rolesURL})
@@ -268,8 +401,11 @@ func runWorkflow() pageData {
 	}
 	steps = append(steps, stepResult{Title: "Find Organization Admin platform role", OK: true, Detail: fmt.Sprintf("Found (id=%s) — will add to canBeAssignedBy on the custom role.", orgAdminID), URL: rolesURL})
 
-	// Step 2: pick the read + update permissions we want on the custom role.
-	// PingOne admin-role permission IDs follow the format "<service>:<action>:<resource>".
+	// Step 2: Choose the permission IDs to include in the custom role.
+	// PingOne admin-role permission IDs use the format service:action:resource,
+	// for example "applications:read:application". We select read + update
+	// and intentionally omit "applications:create:application" so the role
+	// cannot be used to add new applications — only to view and edit existing ones.
 	selected := []map[string]string{
 		{"id": "applications:read:application"},
 		{"id": "applications:update:application"},
@@ -277,8 +413,17 @@ func runWorkflow() pageData {
 	selectedSummary, _ := json.MarshalIndent(selected, "", "  ")
 	steps = append(steps, stepResult{Title: "Select read/update application permissions", OK: true, Detail: "Using applications:read:application + applications:update:application (dropping create).", Body: string(selectedSummary), URL: rolesURL})
 
-	// Step 3: create custom admin role with those permissions.
-	// Custom admin roles are POST /environments/{envID}/roles; platform roles at /roles are read-only.
+	// Step 3: create the custom admin role.
+	// Custom roles live under a specific environment: POST /environments/{envID}/roles.
+	// Note that GET /roles (used above) returns only read-only platform roles;
+	// the custom roles endpoint is scoped to an environment.
+	//
+	// Key payload fields:
+	//   - applicableTo: ["ENVIRONMENT", "POPULATION"] means the role can be
+	//     assigned at environment scope (affects all populations) or narrowed
+	//     to a single population. We include both so callers can choose.
+	//   - canBeAssignedBy: references the Organization Admin role ID. Without
+	//     this, the role is created successfully but cannot be assigned to anyone.
 	roleSuffix := time.Now().Unix()
 	_ = appOwnerID // retained for display in the prior step; not needed in this payload
 	customRolePayload := map[string]interface{}{
@@ -308,6 +453,10 @@ func runWorkflow() pageData {
 	steps = append(steps, step3)
 
 	// Step 4: create a population in the target environment.
+	// A population is a logical container for users. We create one here so the
+	// role assignment in step 6 can be scoped to it — users in this population
+	// will be managed under the custom role, while users in other populations
+	// are unaffected.
 	popPayload := map[string]interface{}{
 		"name":        fmt.Sprintf("App Management Scope %d", roleSuffix),
 		"description": "Population that scopes the trimmed-down App Manager role.",
@@ -332,6 +481,10 @@ func runWorkflow() pageData {
 	steps = append(steps, step4)
 
 	// Step 5: create a group in the target environment.
+	// Groups are the recommended way to assign admin roles at scale: assign the
+	// role once to the group, then manage membership. Adding or removing a user
+	// from the group automatically grants or revokes the role without requiring
+	// individual role-assignment API calls.
 	groupPayload := map[string]interface{}{
 		"name":        fmt.Sprintf("App Managers %d", roleSuffix),
 		"description": "Group that receives the trimmed-down App Manager role.",
@@ -356,9 +509,12 @@ func runWorkflow() pageData {
 	steps = append(steps, step5)
 
 	// Step 6: assign the custom role to the group, scoped to the population.
-	// Note: PingOne does not have a literal "assign group to population" API. The role assignment
-	// on the group carries a scope pointing at the population — group members in that population
-	// inherit the role within that population's context.
+	// PingOne does not have a standalone "assign group to population" concept.
+	// Instead, the scope is expressed on the role assignment itself:
+	//   scope.id   — the population ID
+	//   scope.type — "POPULATION" (must be uppercase)
+	// Members of the group will hold the custom role within the specified
+	// population boundary only. Users in other populations are unaffected.
 	groupRolePayload := map[string]interface{}{
 		"role": map[string]string{"id": customRoleID},
 		"scope": map[string]string{
@@ -378,7 +534,11 @@ func runWorkflow() pageData {
 	step6.OK = true
 	steps = append(steps, step6)
 
-	// Step 7: create a user in the population.
+	// Step 7: create a user inside the population.
+	// Placing the user in the same population as the role-assignment scope
+	// ensures the group membership in step 8 activates the role for this user.
+	// The population field in the create-user body is a reference object, not
+	// a plain string — PingOne requires the {"id": "..."} wrapper form.
 	userPayload := map[string]interface{}{
 		"username":   fmt.Sprintf("app-manager-test-%d", roleSuffix),
 		"email":      fmt.Sprintf("app-manager-test-%d@example.com", roleSuffix),
@@ -407,10 +567,12 @@ func runWorkflow() pageData {
 	step7.Detail = fmt.Sprintf("HTTP %d — user id=%s", status, userID)
 	steps = append(steps, step7)
 
-	// Step 8: add the user to the group so the role assignment applies to them.
+	// Step 8: add the user to the group so the role assignment propagates to them.
+	// The POST body is just the group ID reference; PingOne looks up the group's
+	// role assignments and applies them to this user.
+	// PingOne returns 201 Created (with a body) or 204 No Content — both are success.
 	reqURL, _, raw, _, err = apiCall("POST", "/environments/"+targetEnvID+"/users/"+userID+"/memberOfGroups", token,
 		map[string]string{"id": groupID})
-	// PingOne returns 201 on success or 204 — tolerate both.
 	step8 := stepResult{Title: "Add user to the group", Body: pretty(raw), URL: "POST " + reqURL}
 	if err != nil {
 		step8.Detail = err.Error()
@@ -421,7 +583,12 @@ func runWorkflow() pageData {
 	step8.Detail = "User added to group; role assignment now applies via group membership."
 	steps = append(steps, step8)
 
-	// Step 9: verify role assignments on the user.
+	// Step 9: verify the user's effective role assignments.
+	// GET /users/{userID}/roleAssignments returns both directly-assigned roles
+	// and roles inherited through group membership. We do a simple string search
+	// for the custom role ID to confirm propagation occurred. If it is absent,
+	// the step is marked failed with a note about potential propagation delay —
+	// on some tenants, group-based role inheritance can take a few seconds.
 	reqURL, status, raw, _, err = apiCall("GET", "/environments/"+targetEnvID+"/users/"+userID+"/roleAssignments", token, nil)
 	step9 := stepResult{Title: "Verify user role assignments", Body: pretty(raw), Detail: fmt.Sprintf("HTTP %d", status), URL: "GET " + reqURL}
 	if err != nil || status >= 400 {
@@ -446,6 +613,13 @@ func runWorkflow() pageData {
 
 // --- helpers ---
 
+// findRoleID searches the _embedded.roles array returned by GET /roles for a
+// role whose name matches the given string (case-insensitive). It returns the
+// role's ID and canonical name, or empty strings if no match is found.
+//
+// PingOne paginates role lists using HAL _embedded envelopes. For most tenants
+// the default page size is large enough to include all platform roles in a
+// single response, so pagination is not handled here.
 func findRoleID(parsed map[string]interface{}, name string) (string, string) {
 	embedded, _ := parsed["_embedded"].(map[string]interface{})
 	roles, _ := embedded["roles"].([]interface{})
@@ -459,6 +633,13 @@ func findRoleID(parsed map[string]interface{}, name string) (string, string) {
 	return "", ""
 }
 
+// responseMentionsRole returns true if the raw API response bytes contain the
+// given role ID. This is used to verify that a user's role assignments include
+// the custom role after group membership is established.
+//
+// A plain string-contains check is intentional: the full roleAssignments
+// response embeds the role object inside each assignment, so the ID always
+// appears as a JSON string value if the role is present.
 func responseMentionsRole(raw []byte, roleID string) bool {
 	return strings.Contains(string(raw), roleID)
 }

@@ -1,3 +1,50 @@
+/**
+ * PingOne Custom Admin Role Workflow — Node.js / Express
+ *
+ * PingOne ships with a fixed set of platform (built-in) roles such as
+ * "Organization Admin" and "Application Owner". These cannot be modified.
+ * Custom admin roles let you create narrower, purpose-built roles —
+ * for example, an application manager that can read and update apps but
+ * cannot create new ones.
+ *
+ * This server drives the full workflow end-to-end:
+ *
+ *  1. Obtain an admin bearer token (client_credentials grant) from the
+ *     PingOne token endpoint using a worker app that holds Organization Admin.
+ *     All management API calls require this token.
+ *
+ *  2. GET /roles — list all platform roles. We need the numeric IDs of
+ *     "Application Owner" (to understand available permission IDs) and
+ *     "Organization Admin" (to populate canBeAssignedBy).
+ *
+ *  3. Select a subset of permissions using the service:action:resource
+ *     format (e.g. "applications:read:application"). We take read + update
+ *     and drop create, so holders of the custom role cannot add new apps.
+ *
+ *  4. POST /environments/{envID}/roles — create the custom admin role.
+ *     The canBeAssignedBy field must reference at least one platform role
+ *     whose holders are allowed to delegate the custom role. If omitted,
+ *     even an Organization Admin cannot assign the role to anyone.
+ *
+ *  5. Create a population and a group. The population provides the scope
+ *     boundary; the group is the role-assignment vehicle so that adding a
+ *     user to the group automatically grants them the role.
+ *
+ *  6. POST /groups/{groupID}/roleAssignments — assign the custom role to
+ *     the group, scoped to the population (scope.type = "POPULATION").
+ *     PingOne has no "assign group to population" API; scoping is expressed
+ *     on the role assignment itself.
+ *
+ *  7. Create a user inside the population and add them to the group.
+ *     The user inherits the custom role through group membership.
+ *
+ *  8. GET /users/{userID}/roleAssignments — verify the custom role ID
+ *     appears in the user's effective role assignments.
+ *
+ * Prerequisites: a worker app (client_credentials) with Organization Admin.
+ * Set PINGONE_ADMIN_ENV_ID, PINGONE_ADMIN_CLIENT_ID, PINGONE_ADMIN_CLIENT_SECRET,
+ * PINGONE_TARGET_ENV_ID, PINGONE_AUTH_PATH, and PINGONE_API_PATH in .env.
+ */
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
@@ -6,10 +53,18 @@ const express = require('express');
 const logoPNG = fs.readFileSync(path.join(__dirname, '..', 'assets', 'logo.png')).toString('base64');
 const logoSrc = `data:image/png;base64,${logoPNG}`;
 
+// adminEnvID — the environment that contains the worker app used to get the token.
+// This is typically your "Administrators" environment.
 const adminEnvID        = process.env.PINGONE_ADMIN_ENV_ID;
+// adminClientID / adminClientSecret — credentials of the worker app that holds
+// Organization Admin. Used with the client_credentials grant (no user login).
 const adminClientID     = process.env.PINGONE_ADMIN_CLIENT_ID;
 const adminClientSecret = process.env.PINGONE_ADMIN_CLIENT_SECRET;
+// targetEnvID — where the custom role, population, group, and test user are created.
+// May be the same as adminEnvID or a separate dev/staging environment.
 const targetEnvID       = process.env.PINGONE_TARGET_ENV_ID;
+// authPath / apiPath — regional base URLs. North America: auth.pingone.com /
+// api.pingone.com/v1; Europe: auth.pingone.eu / api.pingone.eu/v1, etc.
 const authPath          = (process.env.PINGONE_AUTH_PATH || 'https://auth.pingone.com').replace(/\/$/, '');
 const apiPath           = (process.env.PINGONE_API_PATH  || 'https://api.pingone.com/v1').replace(/\/$/, '');
 
@@ -116,6 +171,16 @@ function escapeHTML(str) {
 
 // --- PingOne API helpers ---
 
+/**
+ * Obtain a short-lived bearer token using the OAuth 2.0 client_credentials
+ * grant. This is the correct grant for server-to-server admin operations where
+ * no end-user is present. The resulting token inherits the platform roles
+ * (e.g. Organization Admin) assigned to the worker app in PingOne.
+ *
+ * Authentication is HTTP Basic: credentials are base64-encoded as
+ * "clientID:clientSecret" in the Authorization header. This corresponds to the
+ * CLIENT_SECRET_BASIC token endpoint authentication method in PingOne.
+ */
 async function getAdminToken() {
   const body        = new URLSearchParams({ grant_type: 'client_credentials' });
   const credentials = Buffer.from(`${adminClientID}:${adminClientSecret}`).toString('base64');
@@ -135,8 +200,17 @@ async function getAdminToken() {
   return json.access_token;
 }
 
-// apiCall issues a JSON request to the management API with the admin bearer token.
-// Returns { fullURL, status, rawText, parsed }.
+/**
+ * Issue a JSON request to the PingOne management API authenticated with the
+ * admin bearer token. Uses Node 18+ global fetch — no extra dependencies needed.
+ *
+ * Returns { fullURL, status, rawText, parsed }.
+ *   - fullURL:  the complete request URL, used in step cards for display.
+ *   - status:   HTTP status code.
+ *   - rawText:  raw response body string — always populated.
+ *   - parsed:   JSON.parse(rawText) on success, or null if the body is not JSON.
+ *               Always check status before trusting parsed content.
+ */
 async function apiCall(method, path, token, payload = null) {
   const fullURL = apiPath + path;
   const headers = {
@@ -156,6 +230,11 @@ async function apiCall(method, path, token, payload = null) {
   return { fullURL, status: resp.status, rawText, parsed };
 }
 
+/**
+ * Return indented JSON for display in the results page.
+ * Falls back to the raw string if the body is not valid JSON (e.g. a
+ * plain-text error from the server) so the developer still sees the response.
+ */
 function pretty(rawText) {
   try {
     return JSON.stringify(JSON.parse(rawText), null, 2);
@@ -166,10 +245,18 @@ function pretty(rawText) {
 
 // --- Workflow ---
 
+/**
+ * runWorkflow executes the full custom admin role lifecycle and returns
+ * { success, steps[] }. Each step is a plain object matching the StepResult
+ * shape. On failure the function returns immediately, leaving steps populated
+ * up to and including the failed step so the UI can highlight the problem.
+ */
 async function runWorkflow() {
   const steps = [];
 
-  // Step 0: admin token
+  // Step 0: obtain a bearer token via client_credentials.
+  // The worker app must hold Organization Admin — without it, later calls
+  // to create custom roles or assign them will return 403 Forbidden.
   let token;
   try {
     token = await getAdminToken();
@@ -179,7 +266,12 @@ async function runWorkflow() {
   }
   steps.push({ title: 'Obtain admin access token', ok: true, detail: 'client_credentials grant succeeded.' });
 
-  // Step 1: list platform roles
+  // Step 1: GET /roles — fetch all platform (built-in) roles.
+  // Platform roles are global and read-only; they can only be listed, not
+  // created or deleted. We need two IDs from this response:
+  //   - Application Owner — to understand which permission IDs to copy.
+  //   - Organization Admin — to reference in canBeAssignedBy.
+  // The response is often large, so we collapse it in the UI by default.
   let res = await apiCall('GET', '/roles', token);
   const rolesURLLabel = 'GET ' + res.fullURL;
   const step1 = { title: 'List platform roles', body: pretty(res.rawText), url: rolesURLLabel, collapsed: true };
@@ -192,7 +284,8 @@ async function runWorkflow() {
   step1.detail = `HTTP ${res.status}`;
   steps.push(step1);
 
-  // Find Application Owner role id
+  // Locate Application Owner by name. Its permission IDs serve as the template
+  // for the custom role we are about to create.
   const [appOwnerID, appOwnerName] = findRoleID(res.parsed, 'Application Owner');
   if (!appOwnerID) {
     steps.push({ title: 'Find Application Owner platform role', ok: false, detail: "Could not find an 'Application Owner' role in this tenant.", url: rolesURLLabel });
@@ -200,7 +293,9 @@ async function runWorkflow() {
   }
   steps.push({ title: 'Find Application Owner platform role', ok: true, detail: `Found "${appOwnerName}" (id=${appOwnerID}) — we'll borrow its application permissions and drop the create permission.`, url: rolesURLLabel });
 
-  // Find Organization Admin role id — needed in canBeAssignedBy
+  // Locate Organization Admin by name. Its ID goes into canBeAssignedBy on the
+  // custom role. Without canBeAssignedBy, the custom role is created but no
+  // actor — not even an Organization Admin — can assign it to a user or group.
   const [orgAdminID] = findRoleID(res.parsed, 'Organization Admin');
   if (!orgAdminID) {
     steps.push({ title: 'Find Organization Admin platform role', ok: false, detail: "Could not find an 'Organization Admin' role — cannot grant delegation authority.", url: rolesURLLabel });
@@ -208,7 +303,10 @@ async function runWorkflow() {
   }
   steps.push({ title: 'Find Organization Admin platform role', ok: true, detail: `Found (id=${orgAdminID}) — will add to canBeAssignedBy on the custom role.`, url: rolesURLLabel });
 
-  // Select permissions
+  // Step 2: select the permissions to include in the custom role.
+  // Permission IDs use the format service:action:resource.
+  // We choose read + update and omit "applications:create:application" so that
+  // holders of this role cannot add new applications — only view and edit them.
   const selected = [
     { id: 'applications:read:application' },
     { id: 'applications:update:application' },
@@ -221,7 +319,16 @@ async function runWorkflow() {
     url:    rolesURLLabel,
   });
 
-  // Step 3: create custom admin role
+  // Step 3: create the custom admin role.
+  // Custom roles are scoped to an environment: POST /environments/{envID}/roles.
+  // This is distinct from GET /roles which lists read-only platform roles.
+  //
+  // Key payload fields:
+  //   applicableTo    — ["ENVIRONMENT", "POPULATION"] lets the role be assigned
+  //                     at environment scope or narrowed to a single population.
+  //   canBeAssignedBy — references the Organization Admin role ID. This unlocks
+  //                     delegation: only actors holding one of these roles may
+  //                     assign the custom role to other users or groups.
   const roleSuffix        = Math.floor(Date.now() / 1000);
   const customRolePayload = {
     name:            `App Manager (Read/Update) ${roleSuffix}`,
@@ -246,7 +353,9 @@ async function runWorkflow() {
   step3.detail = `HTTP ${res.status} — custom role id=${customRoleID}`;
   steps.push(step3);
 
-  // Step 4: create a population
+  // Step 4: create a population to act as the role-assignment scope boundary.
+  // Users in this population will be subject to the custom role; users in other
+  // populations are unaffected when the role is assigned at POPULATION scope.
   const popPayload = {
     name:        `App Management Scope ${roleSuffix}`,
     description: 'Population that scopes the trimmed-down App Manager role.',
@@ -267,7 +376,9 @@ async function runWorkflow() {
   step4.detail = `HTTP ${res.status} — population id=${populationID}`;
   steps.push(step4);
 
-  // Step 5: create a group
+  // Step 5: create a group to be the role-assignment vehicle.
+  // Assigning a role to a group (rather than to individual users) means that
+  // adding/removing members is the only operation needed to grant/revoke access.
   const groupPayload = {
     name:        `App Managers ${roleSuffix}`,
     description: 'Group that receives the trimmed-down App Manager role.',
@@ -288,7 +399,12 @@ async function runWorkflow() {
   step5.detail = `HTTP ${res.status} — group id=${groupID}`;
   steps.push(step5);
 
-  // Step 6: assign the custom role to the group, scoped to the population
+  // Step 6: assign the custom role to the group, scoped to the population.
+  // PingOne does not have a separate "assign group to population" endpoint.
+  // The population scope is expressed directly on the role assignment:
+  //   scope.id   — the population ID
+  //   scope.type — "POPULATION" (must be uppercase)
+  // Members of the group inherit the custom role within this population only.
   const groupRolePayload = {
     role:  { id: customRoleID },
     scope: { id: populationID, type: 'POPULATION' },
@@ -302,7 +418,10 @@ async function runWorkflow() {
   step6.ok = true;
   steps.push(step6);
 
-  // Step 7: create a user in the population
+  // Step 7: create a user inside the population.
+  // Placing the user in the same population as the role-assignment scope
+  // ensures group membership activates the scoped custom role for this user.
+  // The population field requires a reference object { id } — not a plain string.
   const userPayload = {
     username:   `app-manager-test-${roleSuffix}`,
     email:      `app-manager-test-${roleSuffix}@example.com`,
@@ -325,7 +444,10 @@ async function runWorkflow() {
   step7.detail = `HTTP ${res.status} — user id=${userID}`;
   steps.push(step7);
 
-  // Step 8: add the user to the group
+  // Step 8: add the user to the group.
+  // The POST body is just the group ID reference; PingOne looks up the group's
+  // role assignments and propagates them to this user. PingOne returns 201 with
+  // a body or 204 No Content — both indicate success.
   res = await apiCall('POST', `/environments/${targetEnvID}/users/${userID}/memberOfGroups`, token, { id: groupID });
   const step8 = { title: 'Add user to the group', body: pretty(res.rawText), url: `POST ${res.fullURL}` };
   if (res.status >= 400) {
@@ -337,7 +459,11 @@ async function runWorkflow() {
   step8.detail = 'User added to group; role assignment now applies via group membership.';
   steps.push(step8);
 
-  // Step 9: verify role assignments on the user
+  // Step 9: verify the user's effective role assignments.
+  // GET /users/{id}/roleAssignments returns both directly-assigned roles and
+  // roles inherited through group membership. We do a simple string-contains
+  // check for the custom role ID. If absent, propagation may still be in
+  // progress — the step is marked failed with a note about this possibility.
   res = await apiCall('GET', `/environments/${targetEnvID}/users/${userID}/roleAssignments`, token);
   const step9 = { title: 'Verify user role assignments', body: pretty(res.rawText), detail: `HTTP ${res.status}`, url: `GET ${res.fullURL}` };
   if (res.status >= 400) {
@@ -359,8 +485,15 @@ async function runWorkflow() {
 
 // --- Helpers ---
 
-// findRoleID searches _embedded.roles for a case-insensitive name match.
-// Returns [id, name] or ['', ''].
+/**
+ * Search the _embedded.roles array returned by GET /roles for a role whose
+ * name matches the given string (case-insensitive).
+ * Returns [id, name] or ['', ''] if not found.
+ *
+ * PingOne wraps list responses in a HAL _embedded envelope. For most tenants
+ * the default page size covers all platform roles in one request so pagination
+ * is not needed here.
+ */
 function findRoleID(parsed, name) {
   const roles = parsed?._embedded?.roles;
   if (!Array.isArray(roles)) return ['', ''];

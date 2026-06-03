@@ -1,3 +1,10 @@
+/**
+ * App.jsx — React UI shell for the PingOne Custom Admin Role workflow.
+ *
+ * All PingOne API calls are made by the Express backend (server/index.js).
+ * This component simply POSTs to /api/run and renders the step-by-step
+ * results returned as JSON. Three render stages: idle → loading → results.
+ */
 import React, { useState } from 'react';
 import logoSrc from './logo.png';
 
@@ -88,6 +95,13 @@ const styles = {
   },
 };
 
+/**
+ * StepCard renders a single workflow step result as a card.
+ *
+ * collapsed=true (set by the backend for verbose responses like the
+ * platform-roles list) starts the <details> element closed so the page
+ * does not overwhelm the reader. The user can expand any card manually.
+ */
 function StepCard({ step }) {
   return (
     <div style={styles.card}>
@@ -107,9 +121,13 @@ function StepCard({ step }) {
 }
 
 export default function App() {
-  const [stage, setStage]     = useState('idle');   // idle | loading | results
+  // stage controls which view is shown: idle (start screen), loading (spinner),
+  // or results (step cards + success/failure banner).
+  const [stage, setStage]     = useState('idle');
   const [result, setResult]   = useState(null);
 
+  // runWorkflow triggers the server-side workflow via POST /api/run.
+  // The backend runs all PingOne API calls and returns { success, steps[] }.
   async function runWorkflow() {
     setStage('loading');
     try {
@@ -118,6 +136,7 @@ export default function App() {
       setResult(json);
       setStage('results');
     } catch (err) {
+      // Network-level error (server unreachable, JSON parse failure, etc.).
       setResult({
         success: false,
         steps: [{ title: 'Network error', ok: false, detail: err.message, body: '', url: '', collapsed: false }],

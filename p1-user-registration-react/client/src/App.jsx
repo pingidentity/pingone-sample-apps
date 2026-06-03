@@ -1,3 +1,24 @@
+/**
+ * App.jsx — React UI shell for the PingOne user-registration sample.
+ *
+ * All PingOne API calls happen in the Express backend (server/index.js). This
+ * component is a pure UI state machine: it sends fetch requests to /api/*,
+ * reads the JSON status field, and advances through the registration/login
+ * stages accordingly.
+ *
+ * Stage transitions:
+ *   signup  → verify     when /api/register returns VERIFICATION_REQUIRED
+ *   signup  → success    when /api/register returns COMPLETED (no email verification)
+ *   verify  → success    when /api/verify returns COMPLETED
+ *   login   → dashboard  when /api/login returns COMPLETED (accessToken present)
+ *   any     → error      on ERROR status or network failure
+ *   any     → signup     on reset()
+ *
+ * credentials: 'include' on every fetch call is required so the browser sends
+ * the httpOnly sid cookie that the server uses to look up the active PingOne
+ * flow session. Without it the /api/verify and /api/login calls would arrive
+ * without a session and fail.
+ */
 import React, { useState } from 'react';
 import logoSrc from './logo.png';
 
@@ -20,6 +41,7 @@ const styles = {
   },
 };
 
+/** PageShell wraps every stage in the consistent Ping Identity branded header. */
 function PageShell({ children }) {
   return (
     <div>
@@ -44,6 +66,11 @@ export default function App() {
   const [password, setPassword] = useState('');
   const [code, setCode] = useState('');
 
+  /**
+   * api sends a POST to a backend endpoint and returns the parsed JSON.
+   * credentials: 'include' ensures the sid cookie travels with every request
+   * so the server can locate the active PingOne flow session.
+   */
   async function api(path, body) {
     const resp = await fetch(path, {
       method: 'POST',

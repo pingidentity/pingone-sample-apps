@@ -1,18 +1,35 @@
+/**
+ * app.component.ts — Angular UI shell for the PingOne Custom Admin Role workflow.
+ *
+ * All PingOne API calls are handled by the Express backend (server/index.js).
+ * This standalone component POSTs to /api/run via Angular's HttpClient and
+ * renders the step-by-step results returned as JSON.
+ *
+ * Three render stages controlled by the `stage` property:
+ *   idle    — shows the "Run Workflow" button.
+ *   loading — shows a spinner while the backend runs all API calls.
+ *   results — renders step cards using @for and the success/failure banner.
+ *
+ * The template uses Angular 18 built-in control flow (@switch / @case / @for /
+ * @if) instead of *ngIf / *ngFor directives, which require CommonModule.
+ */
 import { Component, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 
 type Stage = 'idle' | 'loading' | 'results';
 
+/** Matches the step object shape returned by the Express backend. */
 interface StepResult {
   title: string;
   ok: boolean;
   detail: string;
-  body: string;
-  url: string;
-  collapsed: boolean;
+  body: string;       // pretty-printed JSON response body, or empty string
+  url: string;        // "METHOD https://full/url", or empty string
+  collapsed: boolean; // if true, the response <details> starts closed
 }
 
+/** Top-level shape returned by POST /api/run. */
 interface WorkflowResponse {
   success: boolean;
   steps: StepResult[];
@@ -140,6 +157,9 @@ interface WorkflowResponse {
   `,
 })
 export class AppComponent {
+  // HttpClient is provided via provideHttpClient(withFetch()) in app.config.ts.
+  // inject() is used instead of constructor injection — the Angular 18 idiomatic
+  // approach for standalone components.
   private http = inject(HttpClient);
 
   logoSrc = 'assets/logo.png';
@@ -147,6 +167,13 @@ export class AppComponent {
   response: WorkflowResponse | null = null;
   error = '';
 
+  /**
+   * Trigger the server-side workflow via POST /api/run.
+   * The Vite dev-server proxy (proxy.conf.json) forwards /api/* to the Express
+   * backend on port 3000, so no CORS configuration is needed in development.
+   * firstValueFrom converts the Observable returned by HttpClient.post into a
+   * Promise, enabling straightforward async/await error handling.
+   */
   async runWorkflow() {
     this.stage = 'loading';
     this.response = null;
@@ -156,6 +183,8 @@ export class AppComponent {
       );
       this.stage = 'results';
     } catch (err: unknown) {
+      // HttpClient wraps HTTP errors in an HttpErrorResponse; the actual message
+      // may be in err.error.message (server JSON body) or err.message (network).
       const message = (err as { error?: { message?: string }; message?: string })?.error?.message
         ?? (err as { message?: string })?.message
         ?? 'Request failed';
@@ -167,6 +196,7 @@ export class AppComponent {
     }
   }
 
+  /** Reset to the idle stage so the user can run the workflow again. */
   reset() {
     this.stage = 'idle';
     this.response = null;

@@ -1,8 +1,28 @@
+/**
+ * AppComponent — Angular UI shell for the OIDC PKCE walkthrough.
+ *
+ * All OAuth/OIDC logic lives in server/index.js. This component manages the
+ * UI lifecycle and calls the backend API endpoints via HttpClient:
+ *
+ *   POST /api/prepare         — generate PKCE artifacts; returns cards + authorizeURL
+ *   GET  /api/callback-result — fetch step cards after the PingOne redirect back
+ *   POST /api/refresh         — use stored refresh_token for a new access_token
+ *
+ * STAGE MACHINE:
+ *   start → preparing → prepared → (browser redirect to PingOne) →
+ *   loading-callback → callback-done → [optionally] refreshing → refresh-done
+ *
+ * The PingOne redirect is a full browser navigation (window.location.href), so
+ * Angular state is lost. ngOnInit checks for callbackDone=1 in the URL to
+ * detect a returning callback and fetch the results from the server.
+ */
+
 import { Component, OnInit, inject } from '@angular/core';
 import { NgIf, NgFor } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 
+/** A single step card returned by the server. detail is server-generated HTML. */
 interface Card {
   title: string;
   ok: boolean;
@@ -76,6 +96,7 @@ type Stage =
       @case ('prepared') {
         <div>
           <h3>Prepare</h3>
+          <!-- card.detail is server-generated HTML (safe); [innerHTML] is acceptable here -->
           @for (card of prepareCards; track $index) {
             <div style="margin-top: 18px; padding: 14px 16px; border: 1px solid #ddd; border-radius: 4px;">
               <h3 [style.color]="card.ok ? '#0a7a0a' : '#b00020'" style="margin: 0 0 6px 0">
@@ -100,6 +121,7 @@ type Stage =
             </div>
           }
           <p style="margin-top: 20px;">
+            <!-- navigateToPingOne() does window.location.href = authorizeURL — a full browser navigation -->
             <button (click)="navigateToPingOne()">Continue to PingOne &#x2192;</button>
           </p>
         </div>
@@ -232,6 +254,12 @@ export class AppComponent implements OnInit {
   hasRefreshToken = false;
   error = '';
 
+  /**
+   * On init: detect a returning OAuth callback.
+   * callbackDone=1 means the server processed the callback; fetch the results.
+   * The URL parameter is cleared with history.replaceState so a page reload
+   * does not re-trigger the result fetch.
+   */
   ngOnInit(): void {
     const params = new URLSearchParams(window.location.search);
     if (params.get('callbackDone') === '1') {
@@ -241,6 +269,7 @@ export class AppComponent implements OnInit {
     }
   }
 
+  /** Fetch the step cards that the server built during the /callback handler. */
   private async loadCallbackResult(): Promise<void> {
     try {
       const result = await firstValueFrom(
@@ -256,6 +285,7 @@ export class AppComponent implements OnInit {
     }
   }
 
+  /** Call POST /api/prepare to generate PKCE artifacts, then show the prepare cards. */
   async beginLogin(): Promise<void> {
     this.error = '';
     this.stage = 'preparing';
@@ -272,10 +302,16 @@ export class AppComponent implements OnInit {
     }
   }
 
+  /**
+   * Navigate to PingOne's authorize endpoint as a full browser redirect.
+   * This causes Angular state to be lost — the app recovers via ngOnInit
+   * when PingOne redirects back with callbackDone=1.
+   */
   navigateToPingOne(): void {
     window.location.href = this.authorizeURL;
   }
 
+  /** Call POST /api/refresh to exchange the stored refresh_token for a new access_token. */
   async useRefreshToken(): Promise<void> {
     this.error = '';
     this.stage = 'refreshing';

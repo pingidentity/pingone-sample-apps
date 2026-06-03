@@ -1,3 +1,29 @@
+/**
+ * app.component.ts — Angular UI shell for the PingOne user-registration sample.
+ *
+ * All PingOne API calls happen in the Express backend (server/index.js). This
+ * component is a pure UI state machine: it posts to /api/* via Angular's
+ * HttpClient, reads the JSON status field, and advances through the
+ * registration/login stages accordingly.
+ *
+ * Stage transitions:
+ *   signup  → verify     when /api/register returns VERIFICATION_REQUIRED
+ *   signup  → success    when /api/register returns COMPLETED (no email verification)
+ *   verify  → success    when /api/verify returns COMPLETED
+ *   login   → dashboard  when /api/login returns COMPLETED (accessToken present)
+ *   any     → error      on ERROR status or network failure
+ *   any     → signup     on reset()
+ *
+ * withCredentials: true on every post() call is required so Angular includes the
+ * httpOnly sid cookie that the server uses to look up the active PingOne flow
+ * session. Without it the /api/verify and /api/login calls would arrive without
+ * a session and fail.
+ *
+ * The template uses Angular 18 built-in control flow (@switch / @case) rather
+ * than NgSwitchCase. This removes the need to import CommonModule and keeps the
+ * component fully standalone.
+ */
+
 import { Component, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
@@ -91,6 +117,8 @@ interface ApiResponse {
 export class AppComponent {
   private http = inject(HttpClient);
 
+  // The logo is served as a static asset by the Angular build pipeline —
+  // it is copied from src/assets/ to the dist folder verbatim.
   logoSrc = 'assets/logo.png';
   stage: Stage = 'signup';
   username = '';
@@ -100,6 +128,15 @@ export class AppComponent {
   accessToken = '';
   error = '';
 
+  /**
+   * post sends a JSON POST to a backend endpoint and returns the parsed
+   * ApiResponse. withCredentials: true is required so Angular includes the
+   * httpOnly sid cookie on cross-origin requests — without it the server
+   * cannot associate the request with the active PingOne flow session.
+   *
+   * Errors from HttpClient (4xx / 5xx / network failure) are caught and
+   * normalised into an ERROR ApiResponse so callers don't need try/catch.
+   */
   private async post(path: string, body: object): Promise<ApiResponse> {
     try {
       return await firstValueFrom(

@@ -1,3 +1,41 @@
+/**
+ * OIDC Authorization Code Flow with PKCE — React backend (Node.js/Express).
+ *
+ * WHY PKCE?
+ * PKCE (Proof Key for Code Exchange, RFC 7636) prevents authorization code
+ * interception. Before redirecting the user, the client generates a random
+ * secret (code_verifier) and sends only a one-way hash of it (code_challenge)
+ * in the /authorize request. On the /callback the client sends the original
+ * verifier; the server re-hashes and verifies. Only the app that generated
+ * the verifier can complete the exchange.
+ *
+ * This sample uses a CONFIDENTIAL client: the token endpoint receives both
+ * HTTP Basic auth (client_id + client_secret) AND the PKCE code_verifier.
+ *
+ * ARCHITECTURE (React split between server and client):
+ * - This file (server/index.js) handles all OAuth/OIDC logic. It is the only
+ *   process that talks to PingOne; the browser never sees client_secret.
+ * - POST /api/prepare  — generates PKCE artifacts; returns cards + authorizeURL
+ * - GET  /callback     — receives the code from PingOne, runs token exchange,
+ *                        stores results in session, redirects to /?callbackDone=1
+ * - GET  /api/callback-result — React fetches this after the redirect to get cards
+ * - POST /api/refresh  — uses stored refresh_token to obtain new access_token
+ *
+ * The React client (App.jsx) is a pure UI shell. It calls the /api/* endpoints
+ * and renders the step cards that this server builds.
+ *
+ * NINE-STEP FLOW:
+ *  1. Generate code_verifier  — 32 random bytes, base64url-no-pad encoded
+ *  2. Compute code_challenge  — base64url-no-pad(SHA-256(ASCII(code_verifier)))
+ *  3. Generate state + nonce  — CSRF and replay protection
+ *  4. Build GET /as/authorize URL with code_challenge + code_challenge_method=S256
+ *  5. Receive callback        — PingOne 302s back with ?code=...&state=...
+ *  6. Validate state          — abort on mismatch (CSRF check)
+ *  7. POST /as/token          — exchange code + code_verifier + HTTP Basic
+ *  8. Decode + verify ID token (RS256 signature against JWKS)
+ *  9. GET /as/userinfo        — fetch profile claims with the access token
+ */
+
 import 'dotenv/config';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -7,9 +45,14 @@ import cookieParser from 'cookie-parser';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// ---------------------------------------------------------------------------
+// Configuration — loaded from .env (or from the process environment)
+// ---------------------------------------------------------------------------
+
 const envID        = process.env.PINGONE_ENV_ID;
 const clientID     = process.env.PINGONE_CLIENT_ID;
 const clientSecret = process.env.PINGONE_CLIENT_SECRET;
+// Trailing slash removed so URL concatenation is consistent.
 const authPath     = (process.env.PINGONE_AUTH_PATH || '').replace(/\/$/, '');
 const redirectURI  = process.env.PINGONE_REDIRECT_URI;
 const scopes       = process.env.PINGONE_SCOPES;
@@ -19,16 +62,32 @@ if (!envID || !clientID || !clientSecret || !authPath || !redirectURI || !scopes
   process.exit(1);
 }
 
-// --- Session store ---
-// Map<sid, session>
+// ---------------------------------------------------------------------------
+// Session store
+// ---------------------------------------------------------------------------
+// Single-process in-memory Map<sid, session>. The PKCE artifacts (verifier,
+// state, nonce) must survive the full-page redirect to PingOne and back.
+// They cannot live in the React component state — they must be server-side.
+// Production apps should use Redis or a database-backed session store.
+
 const sessions = new Map();
 
+/**
+ * Look up the session for the current request via the "sid" cookie.
+ * Returns null if no matching session exists.
+ */
 function getSession(req) {
   const sid = req.cookies && req.cookies.sid;
   if (!sid) return null;
   return sessions.get(sid) || null;
 }
 
+/**
+ * Look up or create a session for the current request.
+ * Creates a new session with blank fields if no matching session is found.
+ * HttpOnly + SameSite=Lax protects the cookie from XSS and cross-site leakage
+ * while still allowing the browser to send it on the PingOne callback redirect.
+ */
 function getOrCreateSession(req, res) {
   const sid = req.cookies && req.cookies.sid;
   if (sid && sessions.has(sid)) {
@@ -52,8 +111,14 @@ function getOrCreateSession(req, res) {
   return session;
 }
 
-// --- Crypto / JWT helpers ---
+// ---------------------------------------------------------------------------
+// Crypto / JWT helpers
+// ---------------------------------------------------------------------------
 
+/**
+ * Escape user-supplied or server-response values before embedding in HTML.
+ * Never insert raw token or query-string values into HTML without this.
+ */
 function escapeHTML(str) {
   return String(str)
     .replace(/&/g, '&amp;')
@@ -62,6 +127,13 @@ function escapeHTML(str) {
     .replace(/"/g, '&quot;');
 }
 
+/**
+ * Decode a compact-serialized JWT into its header and payload objects.
+ * Does NOT verify the signature — call verifyJWS() for that.
+ *
+ * JWT segments are base64url-encoded without padding. Node's Buffer understands
+ * 'base64url' natively (Node 14+); no padding manipulation is needed.
+ */
 function decodeJWT(token) {
   const parts = token.split('.');
   if (parts.length !== 3) throw new Error(`Not a 3-part JWT: got ${parts.length} parts`);
@@ -72,6 +144,14 @@ function decodeJWT(token) {
   return { header, payload };
 }
 
+/**
+ * Verify an RS256 JWS token against the public keys in a JWKS document.
+ * Throws on any failure (unsupported alg, kid not found, bad signature).
+ *
+ * The RS256 signing input is "header_b64url.payload_b64url" — the raw base64url
+ * segments from the token. The signature covers exactly these bytes; re-encoding
+ * from parsed JSON would break verification.
+ */
 function verifyJWS(token, header, jwks) {
   const alg = header.alg;
   const kid = header.kid;
@@ -79,6 +159,8 @@ function verifyJWS(token, header, jwks) {
     throw new Error(`Unsupported alg "${alg}" (this sample verifies RS256 only)`);
   }
   const keys = (jwks && jwks.keys) || [];
+  // Match by kid. Never fall back to a random key — that would silently accept
+  // tokens signed by an unknown key.
   const match = keys.find(k => k.kid === kid);
   if (!match) throw new Error(`No JWK with kid="${kid}"`);
 
@@ -93,11 +175,23 @@ function verifyJWS(token, header, jwks) {
   if (!ok) throw new Error('Signature verification failed');
 }
 
+/**
+ * Validate standard OIDC Core §3.1.3.7 ID token claims.
+ * Returns an object mapping claim name → error message for any failures.
+ * An empty object means all checks passed.
+ *
+ * iss   — must match the PingOne issuer for this environment
+ * aud   — may be string or array; must contain our client_id
+ * exp   — must be > now (token not expired)
+ * iat   — must not be > now + 60 s (clock skew guard)
+ * nonce — must match the value we generated before the authorize redirect
+ */
 function validateIDClaims(payload, expectedIssuer, expectedAud, expectedNonce) {
   const errs = {};
   if (payload.iss !== expectedIssuer) {
     errs.iss = `got "${payload.iss}", want "${expectedIssuer}"`;
   }
+  // aud may be a single string or a JSON array (OIDC Core §2)
   const aud = payload.aud;
   const audOK = aud === expectedAud ||
     (Array.isArray(aud) && aud.includes(expectedAud));
@@ -135,6 +229,10 @@ function prettyJSONOrRaw(str) {
   }
 }
 
+/**
+ * Render the result of validateIDClaims() as an HTML fragment.
+ * An empty errs object produces a green "All claims valid." message.
+ */
 function renderClaimChecks(errs) {
   if (Object.keys(errs).length === 0) {
     return '<span style="color:#0a7a0a;">All claims valid.</span>';
@@ -145,18 +243,44 @@ function renderClaimChecks(errs) {
   return `<ul style="color:#b00020;">${items}</ul>`;
 }
 
-// --- Express app ---
+// ---------------------------------------------------------------------------
+// Express app
+// ---------------------------------------------------------------------------
 
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
 
-// POST /api/prepare
+/**
+ * POST /api/prepare
+ *
+ * Generates PKCE artifacts, stores them in the session, and returns the step
+ * cards + authorizeURL as JSON. The React client renders the cards and then
+ * uses window.location.href = authorizeURL to redirect to PingOne.
+ *
+ * Step 1: code_verifier
+ *   32 cryptographically random bytes → base64url-no-pad → 43-char string.
+ *   RFC 7636 §4.1 requires 43-128 chars from [A-Za-z0-9-._~]; base64url output
+ *   naturally satisfies this.
+ *
+ * Step 2: code_challenge
+ *   SHA-256(ASCII(verifier)) → base64url-no-pad.
+ *   Node's Buffer.toString('base64url') produces the correct format. Do NOT use
+ *   standard base64 — the "+" and "/" characters it may emit are not URL-safe,
+ *   and the trailing "=" padding is forbidden by RFC 7636.
+ *
+ * Step 3: state + nonce
+ *   Random hex strings. state prevents CSRF (PingOne echoes it in the callback).
+ *   nonce prevents replay (PingOne embeds it as a claim in the ID token).
+ *
+ * Step 4: Build /authorize URL
+ *   code_challenge_method must be exactly "S256" (uppercase).
+ */
 app.post('/api/prepare', (req, res) => {
   const session = getOrCreateSession(req, res);
 
-  // Reset session state
+  // Reset any leftover state from a previous run so the UI is always in sync.
   session.verifier = '';
   session.challenge = '';
   session.state = '';
@@ -177,11 +301,11 @@ app.post('/api/prepare', (req, res) => {
   const challenge = hashBuf.toString('base64url');
   const hashHex   = hashBuf.toString('hex');
 
-  // 3. state + nonce
+  // 3. state + nonce — independent random values for CSRF and replay protection.
   const state = crypto.randomBytes(16).toString('hex');
   const nonce = crypto.randomBytes(16).toString('hex');
 
-  // Store in session
+  // Persist in session — must survive the redirect to PingOne and back.
   session.verifier  = verifier;
   session.challenge = challenge;
   session.state     = state;
@@ -238,7 +362,25 @@ app.post('/api/prepare', (req, res) => {
   res.json({ prepareCards, authorizeURL });
 });
 
-// GET /callback — OAuth redirect from PingOne
+/**
+ * GET /callback — OAuth 2.0 redirect URI handler.
+ *
+ * PingOne appends ?code=...&state=... to this URL after the user authenticates.
+ * Because this is a full browser redirect (not an AJAX call), this handler
+ * processes the entire callback server-side, stores the results in the session,
+ * then redirects the browser to /?callbackDone=1. The React client detects
+ * callbackDone=1 on mount and calls GET /api/callback-result to fetch the cards.
+ *
+ * Step 1: Extract code and state from query string.
+ * Step 2: Validate state — abort if mismatch (CSRF protection).
+ * Step 3: Exchange code for tokens:
+ *   - code_verifier proves this client made the original authorize request
+ *   - redirect_uri must exactly match the authorize request AND the registered URI
+ *   - HTTP Basic auth: client_id + client_secret in Authorization header
+ *   PingOne recomputes SHA-256(code_verifier) and verifies it equals the stored
+ *   code_challenge. This is the core of the PKCE security guarantee.
+ * Steps 4-9: Decode + verify ID token, validate claims, call /userinfo.
+ */
 app.get('/callback', async (req, res) => {
   const session = getSession(req);
   if (!session) {
@@ -261,7 +403,8 @@ app.get('/callback', async (req, res) => {
     return res.redirect('/?callbackError=1');
   }
 
-  // 1. Receive callback
+  // Card 1: Receive callback. The code is single-use — PingOne invalidates it
+  // immediately after the token exchange (or after a short expiry ~2 min).
   const rawQuery = new URLSearchParams(req.query).toString();
   callbackCards.push({
     title: '1. Receive callback',
@@ -272,7 +415,7 @@ app.get('/callback', async (req, res) => {
     collapsed: false,
   });
 
-  // 2. Validate state
+  // Card 2: Validate state — abort on mismatch (CSRF protection).
   const stateOK = gotState === session.state;
   callbackCards.push({
     title: '2. Validate state',
@@ -288,7 +431,8 @@ app.get('/callback', async (req, res) => {
     return res.redirect('/?callbackError=1');
   }
 
-  // 3. Token exchange
+  // Card 3: Token exchange — send code_verifier + HTTP Basic auth.
+  // Uses Node 18+ built-in fetch; no additional dependencies required.
   const tokenURL = `${authPath}/${envID}/as/token`;
   const basic = Buffer.from(`${clientID}:${clientSecret}`).toString('base64');
   const tokenBody = new URLSearchParams({
@@ -340,7 +484,8 @@ app.get('/callback', async (req, res) => {
   session.idToken      = idToken;
   session.refreshToken = refreshToken;
 
-  // 4. Decode ID token
+  // Card 4: Decode ID token. Do NOT trust any claim until after signature
+  // verification in card 6.
   let jwtHeader = null;
   let jwtPayload = null;
   let decodeErr = null;
@@ -363,7 +508,9 @@ app.get('/callback', async (req, res) => {
     collapsed: false,
   });
 
-  // 5. Fetch JWKS
+  // Card 5: Fetch JWKS — PingOne's public signing keys.
+  // In production, cache this response (respect Cache-Control headers).
+  // Re-fetch only when a kid is not found in the cached set.
   const jwksURL = `${authPath}/${envID}/as/jwks`;
   let jwks = null;
   let jwksRaw = '';
@@ -386,7 +533,7 @@ app.get('/callback', async (req, res) => {
     collapsed: true,
   });
 
-  // 6. Verify ID token signature
+  // Card 6: Verify ID token signature — RS256 via the matched JWK.
   let sigErr = null;
   try {
     verifyJWS(idToken, jwtHeader || {}, jwks || {});
@@ -403,7 +550,7 @@ app.get('/callback', async (req, res) => {
     collapsed: false,
   });
 
-  // 7. Validate ID token claims
+  // Card 7: Validate ID token claims (iss, aud, exp, iat, nonce).
   const expectedIssuer = `${authPath}/${envID}/as`;
   const claimsErrs = jwtPayload
     ? validateIDClaims(jwtPayload, expectedIssuer, clientID, session.nonce)
@@ -418,7 +565,7 @@ app.get('/callback', async (req, res) => {
     collapsed: false,
   });
 
-  // 8. /userinfo
+  // Card 8: /userinfo — fetch profile claims for the authenticated user.
   const userinfoURL = `${authPath}/${envID}/as/userinfo`;
   let uiRaw = '';
   let uiStatus = 0;
@@ -443,7 +590,7 @@ app.get('/callback', async (req, res) => {
     collapsed: false,
   });
 
-  // 9. Final tokens
+  // Card 9: Final tokens — collapsed because the raw values are long.
   callbackCards.push({
     title: '9. Tokens',
     ok: true,
@@ -456,10 +603,18 @@ app.get('/callback', async (req, res) => {
   session.callbackCards    = callbackCards;
   session.hasRefreshToken  = !!refreshToken;
 
+  // Redirect to the React app. The React client detects callbackDone=1 on mount
+  // and calls /api/callback-result to retrieve the cards.
   res.redirect('/?callbackDone=1');
 });
 
-// GET /api/callback-result
+/**
+ * GET /api/callback-result
+ *
+ * Returns the step cards built during the /callback redirect handler.
+ * Called by the React client after detecting callbackDone=1 in the URL.
+ * Requires the same "sid" cookie that was set during /api/prepare.
+ */
 app.get('/api/callback-result', (req, res) => {
   const session = getSession(req);
   if (!session) {
@@ -472,7 +627,17 @@ app.get('/api/callback-result', (req, res) => {
   });
 });
 
-// POST /api/refresh
+/**
+ * POST /api/refresh
+ *
+ * Uses the refresh_token stored in the session to obtain a new access_token.
+ * The refresh_token grant does NOT re-play PKCE — PKCE only applies to the
+ * initial authorization_code exchange. Only HTTP Basic auth is needed here.
+ *
+ * PingOne typically rotates the refresh_token on every use (issues a new token
+ * and invalidates the old). The handler stores the new tokens back to the session
+ * so subsequent refreshes still work.
+ */
 app.post('/api/refresh', async (req, res) => {
   const session = getSession(req);
   if (!session || !session.refreshToken) {
@@ -516,6 +681,7 @@ app.post('/api/refresh', async (req, res) => {
     collapsed: false,
   };
 
+  // Store rotated tokens so the next refresh still works.
   if (err === null && status < 400 && parsed) {
     if (parsed.access_token)  session.accessToken  = parsed.access_token;
     if (parsed.id_token)      session.idToken      = parsed.id_token;
@@ -525,7 +691,13 @@ app.post('/api/refresh', async (req, res) => {
   res.json({ refreshCards: [card] });
 });
 
-// Serve built React app
+// ---------------------------------------------------------------------------
+// Static — serve built React app in production
+// ---------------------------------------------------------------------------
+// In development the React dev server (port 5173) proxies /api/* to this server.
+// In production run `npm run build` in client/ first, then this server serves
+// the built files from client/dist.
+
 app.use(express.static(path.join(__dirname, '..', 'client', 'dist')));
 app.get('*', (_req, res) => {
   res.sendFile(path.join(__dirname, '..', 'client', 'dist', 'index.html'));
