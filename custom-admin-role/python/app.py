@@ -64,7 +64,7 @@ from flask import Flask, request
 
 load_dotenv()
 
-_logo_path = os.path.join(os.path.dirname(__file__), '..', 'assets', 'logo.png')
+_logo_path = os.path.join(os.path.dirname(__file__), '..', '..', 'assets', 'logo.png')
 LOGO_SRC = 'data:image/png;base64,' + base64.b64encode(open(_logo_path, 'rb').read()).decode()
 
 # ADMIN_ENV_ID — the environment that contains the worker app used to obtain

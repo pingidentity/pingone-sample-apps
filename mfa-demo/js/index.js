@@ -50,7 +50,7 @@ const express = require('express');
 
 // The logo is embedded as a base64 data URI so the single-file app has no
 // separate static-file serving requirement.
-const logoPNG = fs.readFileSync(path.join(__dirname, '..', 'assets', 'logo.png')).toString('base64');
+const logoPNG = fs.readFileSync(path.join(__dirname, '..', '..', 'assets', 'logo.png')).toString('base64');
 const logoSrc = `data:image/png;base64,${logoPNG}`;
 
 // End-user OIDC app credentials — used only for the final token exchange.

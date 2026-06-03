@@ -1,9 +1,9 @@
 # Environment files
 .env
 
-# Go binaries (compiled output matches the directory name pattern)
-p1-*/p1-*
-p1-*/*.exe
+# Go binaries (each go/ dir produces a binary named after its module)
+*/go/p1-*
+*/go/*.exe
 
 # Node
 node_modules/
@@ -21,9 +21,14 @@ __pycache__/
 POSTMAN_COLLECTIONS.md
 
 # Per-app logo copies (canonical is assets/logo.png)
-p1-*/logo.png
-p1-*/client/src/logo.png
-p1-*/client/src/assets/logo.png
+*/go/logo.png
+*/react/client/src/logo.png
+*/angular/client/src/assets/logo.png
+# davinci-signon's JS/Python apps serve the logo via /logo.png and need a local copy
+davinci-signon/js/logo.png
+davinci-signon/python/logo.png
+davinci-signon/react/logo.png
+davinci-signon/angular/logo.png
 
 # macOS
 .DS_Store

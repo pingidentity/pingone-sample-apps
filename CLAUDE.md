@@ -6,15 +6,24 @@ This workspace contains PingOne integration sample apps in multiple languages. E
 
 ## Repository layout
 
-Each app is a self-contained directory:
+Apps are grouped by workflow. Each workflow has 5 language ports:
 
 ```
-p1-<workflow>-go/        ← canonical Go implementation
-p1-<workflow>-js/        ← Node.js/Express single-file port
-p1-<workflow>-python/    ← Python/Flask single-file port
-p1-<workflow>-react/     ← React (Vite) + Node/Express
-p1-<workflow>-angular/   ← Angular 18 + Node/Express
+<workflow>/
+├── go/        ← canonical Go implementation
+├── js/        ← Node.js/Express single-file port
+├── python/    ← Python/Flask single-file port
+├── react/     ← React (Vite) + Node/Express
+└── angular/   ← Angular 18 + Node/Express
 ```
+
+Workflow folders: `oidc-pkce/`, `user-registration/`, `mfa-demo/`, `m2m-credentials/`, `davinci-signon/`, `custom-admin-role/`.
+
+The canonical logo lives at `assets/logo.png` (tracked). Per-app copies are gitignored:
+- Go: `<workflow>/go/logo.png` (embedded via `//go:embed`)
+- React: `<workflow>/react/client/src/logo.png` (Vite import)
+- Angular: `<workflow>/angular/client/src/assets/logo.png` (static asset)
+- JS / Python: read at startup from `../../assets/logo.png` and embed as base64 data URI
 
 The **Go app is always the canonical source of truth.** All other language ports must match its workflow steps exactly: same ordering, same step titles, same early-return-on-error pattern, same detail strings.
 
@@ -101,7 +110,7 @@ Token acquisition uses `client_credentials` grant with HTTP Basic auth (`base64(
 
 Directory layout:
 ```
-p1-<workflow>-react/
+<workflow>/react/
   README.md
   server/
     index.js          ← Express backend, port 3000
@@ -141,7 +150,7 @@ export default defineConfig({
 
 Directory layout:
 ```
-p1-<workflow>-angular/
+<workflow>/angular/
   README.md
   server/
     index.js          ← same as React backend

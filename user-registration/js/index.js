@@ -56,7 +56,7 @@ const express = require('express');
 
 // Embed the logo as a base64 data URI so the single-file server doesn't need
 // to serve a separate static asset route.
-const logoPNG = fs.readFileSync(path.join(__dirname, '..', 'assets', 'logo.png')).toString('base64');
+const logoPNG = fs.readFileSync(path.join(__dirname, '..', '..', 'assets', 'logo.png')).toString('base64');
 const logoSrc = `data:image/png;base64,${logoPNG}`;
 
 const envID = process.env.PINGONE_ENV_ID;

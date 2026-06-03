@@ -67,7 +67,7 @@ load_dotenv()
 
 # Encode the logo as a data URI so the single-file server doesn't need a static
 # asset route. The image is read once at startup.
-_logo_path = os.path.join(os.path.dirname(__file__), '..', 'assets', 'logo.png')
+_logo_path = os.path.join(os.path.dirname(__file__), '..', '..', 'assets', 'logo.png')
 LOGO_SRC = 'data:image/png;base64,' + base64.b64encode(open(_logo_path, 'rb').read()).decode()
 
 ENV_ID = os.getenv("PINGONE_ENV_ID")

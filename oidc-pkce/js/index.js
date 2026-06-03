@@ -43,7 +43,7 @@ const express = require('express');
 const cookieParser = require('cookie-parser');
 
 // Embed the logo as a base64 data URL so there is no separate static-file route.
-const logoPNG = fs.readFileSync(path.join(__dirname, '..', 'assets', 'logo.png')).toString('base64');
+const logoPNG = fs.readFileSync(path.join(__dirname, '..', '..', 'assets', 'logo.png')).toString('base64');
 const logoSrc = `data:image/png;base64,${logoPNG}`;
 
 // ---------------------------------------------------------------------------

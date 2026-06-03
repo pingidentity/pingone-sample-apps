@@ -35,7 +35,7 @@ const express = require('express');
 // Embed the logo as a base64 data URI so the single-file app has no external
 // static-file dependencies. This is fine for a sample; a production app would
 // serve static assets separately.
-const logoPNG = fs.readFileSync(path.join(__dirname, '..', 'assets', 'logo.png')).toString('base64');
+const logoPNG = fs.readFileSync(path.join(__dirname, '..', '..', 'assets', 'logo.png')).toString('base64');
 const logoSrc = `data:image/png;base64,${logoPNG}`;
 
 // All configuration comes from environment variables (loaded from .env).

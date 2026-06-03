@@ -50,7 +50,7 @@ const fs = require('fs');
 const path = require('path');
 const express = require('express');
 
-const logoPNG = fs.readFileSync(path.join(__dirname, '..', 'assets', 'logo.png')).toString('base64');
+const logoPNG = fs.readFileSync(path.join(__dirname, '..', '..', 'assets', 'logo.png')).toString('base64');
 const logoSrc = `data:image/png;base64,${logoPNG}`;
 
 // adminEnvID — the environment that contains the worker app used to get the token.

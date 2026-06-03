@@ -50,7 +50,7 @@ load_dotenv()
 
 # Embed the logo as a base64 data URI so the single-file app has no external
 # static-file dependencies at runtime.
-_logo_path = os.path.join(os.path.dirname(__file__), '..', 'assets', 'logo.png')
+_logo_path = os.path.join(os.path.dirname(__file__), '..', '..', 'assets', 'logo.png')
 LOGO_SRC = 'data:image/png;base64,' + base64.b64encode(open(_logo_path, 'rb').read()).decode()
 
 # All configuration comes from environment variables.
